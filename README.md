@@ -9,7 +9,7 @@
 
 ## Redux
 
-[Redux][redux-wikipedia-url], [originally implemented in JavaScript][redux-js-url], is an functional approach to manage a state.
+[Redux][redux-wikipedia-url], [originally implemented in JavaScript][redux-js-url], is an functional approach to state management.
 The core concept is that you have a _state_ and a _reducer_, a function to create a new state from the old one and an _action_, a description of what to change.
 Because the state itself is immutable, this results in a very clean way of managing application state, where every possible action is defined beforehand and dispatched later on.
 
