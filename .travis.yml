@@ -8,6 +8,9 @@ rust:
 jobs:
   include:
     - stage: coverage
+      branches:
+        only:
+          - master
       rust: stable
       install:
         - bash <(curl https://raw.githubusercontent.com/xd009642/tarpaulin/master/travis-install.sh)
