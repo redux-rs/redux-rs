@@ -1,4 +1,5 @@
 use crate::{Middleware, Reducer, Subscription, Vec};
+use generational_arena::{Arena, Index};
 
 /// A container holding a state and providing the possibility to dispatch actions.
 ///
@@ -7,8 +8,10 @@ pub struct Store<State, Action> {
     reducer: Reducer<State, Action>,
     state: State,
     middleware: Vec<Middleware<State, Action>>,
-    subscriptions: Vec<Subscription<State>>
+    subscriptions: Arena<Box<Subscription<State>>>
 }
+
+/// A handle to unsubscribe
 
 impl<State, Action> Store<State, Action> {
     /// Creates a new store.
@@ -39,7 +42,7 @@ impl<State, Action> Store<State, Action> {
             reducer,
             state: initial_state,
             middleware: Vec::new(),
-            subscriptions: Vec::new()
+            subscriptions: Arena::new()
         }
     }
 
@@ -116,7 +119,7 @@ impl<State, Action> Store<State, Action> {
 
     /// Runs all subscriptions.
     fn dispatch_subscriptions(&self) {
-        for subscription in &self.subscriptions {
+        for (_, subscription) in &self.subscriptions {
             subscription(self.state());
         }
     }
@@ -141,15 +144,22 @@ impl<State, Action> Store<State, Action> {
     ///
     /// let mut store = Store::new(reducer, initial_state);
     ///
-    /// let listener: Subscription<State> = |state: &State| {
+    /// let listener = |state: &State| {
     ///     println!("Something changed! New value: {}", state);
     /// };
     ///
     /// store.subscribe(listener);
     /// ```
-    pub fn subscribe(&mut self, callback: Subscription<State>) {
-        self.subscriptions.push(callback);
+    pub fn subscribe<Sub: 'static + Fn(&State)>(&mut self, callback: Sub) -> Index {
+        self.subscriptions.insert(Box::new(callback))
     }
+
+    /// Unsubscribe previously subscribed callback from the store.
+    pub fn unsubscribe(&mut self, callback_index: Index) {
+        self.subscriptions.remove(callback_index);
+    }
+
+    pub fn poo(&self) { println!("subscription count: {}", self.subscriptions.len()); }
 
     /// Adds a custom middleware to the store.
     ///

@@ -1,4 +1,4 @@
-use redux_rs::{Store, Subscription};
+use redux_rs::{Store};
 
 // A simple counter.
 type State = i8;
@@ -33,7 +33,7 @@ fn main() {
     store.add_middleware(reverse_middleware);
 
     // Define listener.
-    let listener: Subscription<State> = |state: &State| {
+    let listener = |state: &State| {
         println!("Counter changed! New value: {}", state);
     };
 

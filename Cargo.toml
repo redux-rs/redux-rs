@@ -18,3 +18,4 @@ default = ["std"]
 std = []
 
 [dependencies]
+"generational-arena" = "0.2.3"

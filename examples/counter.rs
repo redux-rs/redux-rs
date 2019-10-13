@@ -1,4 +1,4 @@
-use redux_rs::{Store, Subscription};
+use redux_rs::{Store};
 
 #[derive(Default)]
 // This is a state. It describes an immutable object.
@@ -31,7 +31,7 @@ fn main() {
     let mut store = Store::new(counter_reducer, State::default());
 
     // A listener getting triggered whenever the state changes.
-    let listener: Subscription<State> = |state: &State| {
+    let listener = |state: &State| {
         println!("Counter changed! New value: {}", state.counter);
     };
 
