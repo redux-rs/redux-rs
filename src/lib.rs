@@ -228,3 +228,107 @@ where
         notify.notify_one()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct Counter {
+        value: i32
+    }
+
+    impl Counter {
+        pub fn new(value: i32) -> Self {
+            Counter { value }
+        }
+    }
+
+    impl Default for Counter {
+        fn default() -> Self {
+            Self { value: 42 }
+        }
+    }
+
+    struct ValueSelector;
+    impl Selector<Counter> for ValueSelector {
+        type Result = i32;
+
+        fn select(&self, state: &Counter) -> Self::Result {
+            state.value
+        }
+    }
+
+    enum CounterAction {
+        Increment,
+        Decrement
+    }
+
+    fn counter_reducer(state: Counter, action: CounterAction) -> Counter {
+        match action {
+            CounterAction::Increment => Counter {
+                value: state.value + 1
+            },
+            CounterAction::Decrement => Counter {
+                value: state.value - 1
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn counter_default_state() {
+        let store = Store::new(counter_reducer);
+        assert_eq!(Counter::default(), store.state_cloned().await);
+    }
+
+    #[tokio::test]
+    async fn counter_supplied_state() {
+        let store = Store::new_with_state(counter_reducer, Counter::new(5));
+        assert_eq!(Counter::new(5), store.state_cloned().await);
+    }
+
+    #[tokio::test]
+    async fn counter_actions_cloned_state() {
+        let store = Store::new(counter_reducer);
+        assert_eq!(Counter::new(42), store.state_cloned().await);
+
+        store.dispatch(CounterAction::Increment).await;
+        assert_eq!(Counter::new(43), store.state_cloned().await);
+
+        store.dispatch(CounterAction::Increment).await;
+        assert_eq!(Counter::new(44), store.state_cloned().await);
+
+        store.dispatch(CounterAction::Decrement).await;
+        assert_eq!(Counter::new(43), store.state_cloned().await);
+    }
+
+    #[tokio::test]
+    async fn counter_actions_selector_struct() {
+        let store = Store::new(counter_reducer);
+        assert_eq!(42, store.select(ValueSelector).await);
+
+        store.dispatch(CounterAction::Increment).await;
+        assert_eq!(43, store.select(ValueSelector).await);
+
+        store.dispatch(CounterAction::Increment).await;
+        assert_eq!(44, store.select(ValueSelector).await);
+
+        store.dispatch(CounterAction::Decrement).await;
+        assert_eq!(43, store.select(ValueSelector).await);
+    }
+
+    #[tokio::test]
+    async fn counter_actions_selector_lambda() {
+        let store = Store::new(counter_reducer);
+        assert_eq!(42, store.select(|state: &Counter| state.value).await);
+
+        store.dispatch(CounterAction::Increment).await;
+        assert_eq!(43, store.select(|state: &Counter| state.value).await);
+
+        store.dispatch(CounterAction::Increment).await;
+        assert_eq!(44, store.select(|state: &Counter| state.value).await);
+
+        store.dispatch(CounterAction::Decrement).await;
+        assert_eq!(43, store.select(|state: &Counter| state.value).await);
+    }
+}

@@ -12,3 +12,6 @@ edition = "2018"
 [dependencies]
 log = "0.4"
 tokio = { version = "1", features = [ "sync", "rt" ] }
+
+[dev-dependencies]
+tokio = { version = "1", features = [ "sync", "rt", "macros" ] }
