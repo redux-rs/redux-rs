@@ -1,19 +1,14 @@
-use log::warn;
-use std::any::Any;
 use std::marker::PhantomData;
-use std::sync::mpsc::{channel, Sender};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::thread::JoinHandle;
+use std::sync::Arc;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::{oneshot, Notify};
+use tokio::task::JoinHandle;
 
-type DynamicAction = Box<dyn Any + Send + 'static>;
+pub struct Store<State, Action, RootReducer> {
+    sender: UnboundedSender<Work<State, Action>>,
+    _worker_handle: JoinHandle<()>,
 
-pub trait Dispatch {
-    fn dispatch(&self, action: DynamicAction);
-}
-
-pub trait WithState<State> {
-    fn state(&self) -> State;
+    _types: PhantomData<RootReducer>
 }
 
 pub trait Reducer<State, Action> {
@@ -29,185 +24,207 @@ where
     }
 }
 
-pub trait Subscriber<State>: Send {
-    fn updated(&self, state: &State);
+pub trait Selector<State> {
+    type Result;
+
+    fn select(&self, state: &State) -> Self::Result;
 }
 
-impl<F, State> Subscriber<State> for F
+impl<F, State, Result> Selector<State> for F
 where
-    F: for<'r> Fn(&'r State) + Send
+    F: Fn(&State) -> Result
 {
-    fn updated(&self, state: &State) {
+    type Result = Result;
+
+    fn select(&self, state: &State) -> Self::Result {
         self(state)
     }
 }
 
-pub struct Store<State, Action> {
-    data: Arc<Mutex<StoreData<State>>>,
-
-    action_sender: Sender<DynamicAction>,
-
-    _join_handle: JoinHandle<()>,
-    _types: PhantomData<Action>
-}
-
-struct StoreData<State> {
-    state: Option<State>,
-    subscribers: Vec<Box<dyn Subscriber<State>>>
-}
-
-impl<State, Action> Store<State, Action> {
-    pub fn new<RootReducer>(reducer: RootReducer) -> Self
+impl<State, Action, RootReducer> Store<State, Action, RootReducer>
+where
+    Action: Send + 'static,
+    RootReducer: Reducer<State, Action> + Send + 'static,
+    State: Send + 'static
+{
+    pub fn new(root_reducer: RootReducer) -> Self
     where
-        Action: 'static,
-        RootReducer: Reducer<State, Action> + Send + 'static,
-        State: Default + Send + 'static
+        State: Default
     {
-        Self::new_with_state(reducer, State::default())
+        Self::new_with_state(root_reducer, Default::default())
     }
 
-    pub fn new_with_state<RootReducer>(reducer: RootReducer, default_state: State) -> Self
-    where
-        Action: 'static,
-        RootReducer: Reducer<State, Action> + Send + 'static,
-        State: Send + 'static
-    {
-        let (sender, receiver): (Sender<DynamicAction>, _) = channel();
+    pub fn new_with_state(root_reducer: RootReducer, state: State) -> Self {
+        let (mut worker, sender) = StateWorker::new(root_reducer, state);
 
-        let data = Arc::new(Mutex::new(StoreData {
-            state: Some(default_state),
-            subscribers: Vec::new()
-        }));
-
-        let thread_data = data.clone();
-        let join_handle = thread::spawn(move || {
-            while let Ok(action) = receiver.recv() {
-                let action = match action.downcast() {
-                    Ok(action) => *action,
-                    Err(_) => {
-                        warn!("Action should be of the same type of the store. You're probably missing middleware to handle the kind of action you've send to the store!");
-                        continue;
-                    }
-                };
-
-                let mut data_lock = thread_data
-                    .lock()
-                    .expect("Only returns an error when a previous piece of code paniced");
-
-                let old_state = data_lock.state.take().unwrap();
-                let new_state = reducer.reduce(old_state, action);
-
-                data_lock.state = Some(new_state);
-
-                let state = data_lock.state.as_ref().unwrap();
-                data_lock.subscribers.iter().for_each(|s| s.updated(state));
-            }
+        let _worker_handle = tokio::spawn(async move {
+            worker.run().await;
         });
 
-        let store = Self {
-            data,
+        Store {
+            sender,
+            _worker_handle,
 
-            action_sender: sender,
-
-            _join_handle: join_handle,
             _types: Default::default()
-        };
-
-        store
+        }
     }
 
-    pub fn subscribe(&mut self, subscriber: Box<dyn Subscriber<State>>) {
-        self.data.lock().unwrap().subscribers.push(subscriber);
+    fn dispatch_work(&self, work: Work<State, Action>) {
+        let _ = self.sender.send(work);
+    }
+
+    pub async fn dispatch(&self, action: Action) {
+        let (work, notifier) = Work::reduce(action);
+        self.dispatch_work(work);
+        notifier.notified().await;
+    }
+
+    pub async fn select<S: Selector<State, Result = Result>, Result>(&self, selector: S) -> Result
+    where
+        S: Selector<State, Result = Result> + Send + 'static,
+        Result: Send + 'static
+    {
+        let (work, result_receiver) = Work::select(selector);
+        self.dispatch_work(work);
+        return result_receiver.await.unwrap();
+    }
+
+    pub async fn state_cloned(&self) -> State
+    where
+        State: Clone
+    {
+        self.select(|state: &State| state.clone()).await
     }
 }
 
-impl<State, Action> Dispatch for Store<State, Action> {
-    fn dispatch(&self, action: DynamicAction) {
-        // This only fails when the receiver is gone (inner store) this should never happen
-        let _ = self.action_sender.send(action);
+struct StateWorker<State, Action, RootReducer> {
+    receiver: UnboundedReceiver<Work<State, Action>>,
+    root_reducer: RootReducer,
+    state: Option<State>
+}
+
+enum Work<State, Action> {
+    Reduce(ReduceWork<Action>),
+    Select(Box<dyn SelectWork<State> + Send + 'static>)
+}
+
+impl<State, Action> Work<State, Action> {
+    fn reduce(action: Action) -> (Self, Arc<Notify>) {
+        let (work, notifier) = ReduceWork::new(action);
+        (Work::Reduce(work), notifier)
+    }
+
+    fn select<S, Result>(selector: S) -> (Self, oneshot::Receiver<Result>)
+    where
+        S: Selector<State, Result = Result> + Send + 'static,
+        State: Send + 'static,
+        Result: Send + 'static
+    {
+        let (work, result_receiver) = SelectWorkImpl::new(selector);
+        (Work::Select(Box::new(work)), result_receiver)
     }
 }
 
-impl<State, Action> WithState<State> for Store<State, Action>
+struct ReduceWork<Action> {
+    action: Action,
+    notify: Arc<Notify>
+}
+
+impl<Action> ReduceWork<Action> {
+    pub fn new(action: Action) -> (Self, Arc<Notify>) {
+        let notify = Arc::new(Notify::new());
+        (
+            ReduceWork {
+                action,
+                notify: notify.clone()
+            },
+            notify
+        )
+    }
+}
+
+trait SelectWork<State> {
+    fn select(self: Box<Self>, state: &State);
+}
+
+struct SelectWorkImpl<Select, State, Result>
 where
-    State: Clone
+    Select: Selector<State, Result = Result>
 {
-    fn state(&self) -> State {
-        self.data
-            .lock()
-            .expect("Only returns an error when a previous piece of code paniced")
-            .state
-            .as_ref()
-            .expect(
-                "State never contains None, only during updates, which are behind this very mutex"
-            )
-            .clone()
+    selector: Select,
+    result_sender: oneshot::Sender<Result>,
+
+    _type: PhantomData<State>
+}
+
+impl<Select, State, Result> SelectWorkImpl<Select, State, Result>
+where
+    Select: Selector<State, Result = Result>
+{
+    pub fn new(selector: Select) -> (Self, oneshot::Receiver<Result>) {
+        let (result_sender, result_receiver) = oneshot::channel();
+
+        (
+            SelectWorkImpl {
+                selector,
+                result_sender,
+
+                _type: Default::default()
+            },
+            result_receiver
+        )
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{
-        atomic::{AtomicU8, Ordering},
-        Barrier
-    };
+impl<Select, State, Result> SelectWork<State> for SelectWorkImpl<Select, State, Result>
+where
+    Select: Selector<State, Result = Result>
+{
+    fn select(self: Box<Self>, state: &State) {
+        let selection = self.selector.select(state);
+        let _ = self.result_sender.send(selection);
+    }
+}
 
-    #[derive(Clone, Default, Debug, PartialEq)]
-    struct CounterStore(i32);
+impl<State, Action, RootReducer> StateWorker<State, Action, RootReducer>
+where
+    RootReducer: Reducer<State, Action>
+{
+    pub fn new(
+        root_reducer: RootReducer,
+        state: State
+    ) -> (Self, UnboundedSender<Work<State, Action>>) {
+        let (sender, receiver) = unbounded_channel();
 
-    enum CounterAction {
-        Increment,
-        Decrement
+        (
+            StateWorker {
+                receiver,
+                root_reducer,
+                state: Some(state)
+            },
+            sender
+        )
     }
 
-    fn counter_reducer(state: CounterStore, action: CounterAction) -> CounterStore {
-        let value = state.0;
-
-        let new_value = match action {
-            CounterAction::Increment => value + 1,
-            CounterAction::Decrement => value - 1
-        };
-
-        CounterStore(new_value)
-    }
-
-    #[test]
-    fn counter_without_middleware() {
-        let (sender, receiver) = channel();
-
-        let mut store = Store::new(counter_reducer);
-        store.subscribe(Box::new(move |state: &CounterStore| {
-            sender.send(state.0).unwrap();
-        }));
-
-        store.dispatch(Box::new(CounterAction::Increment));
-        store.dispatch(Box::new(CounterAction::Decrement));
-
-        assert_eq!(1, receiver.recv().unwrap());
-        assert_eq!(0, receiver.recv().unwrap());
-    }
-
-    #[test]
-    fn counter_send_invalid_action() {
-        let number_of_updates = Arc::new(AtomicU8::new(0));
-        let incremented = Arc::new(Barrier::new(2));
-
-        let mut store = Store::new(counter_reducer);
-
-        let subscriber_number_of_updates = number_of_updates.clone();
-        let subscriber_barrier = incremented.clone();
-        store.subscribe(Box::new(move |state: &CounterStore| {
-            subscriber_number_of_updates.fetch_add(1, Ordering::Relaxed);
-            if state.0 == 1 {
-                subscriber_barrier.wait();
+    pub async fn run(&mut self) {
+        while let Some(work) = self.receiver.recv().await {
+            match work {
+                Work::Reduce(reduce_work) => self.reduce(reduce_work),
+                Work::Select(select_work) => select_work.select(self.state.as_ref().unwrap())
             }
-        }));
+        }
 
-        store.dispatch(Box::new("test"));
-        store.dispatch(Box::new(CounterAction::Increment));
+        ()
+    }
 
-        incremented.wait();
-        assert_eq!(1, number_of_updates.load(Ordering::Relaxed));
+    fn reduce(&mut self, reduce_work: ReduceWork<Action>) {
+        let ReduceWork { action, notify } = reduce_work;
+
+        let old_state = self.state.take().unwrap();
+        let new_state = self.root_reducer.reduce(old_state, action);
+
+        self.state = Some(new_state);
+
+        notify.notify_one()
     }
 }
