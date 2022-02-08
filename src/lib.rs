@@ -213,8 +213,6 @@ where
                 Work::Select(select_work) => select_work.select(self.state.as_ref().unwrap())
             }
         }
-
-        ()
     }
 
     fn reduce(&mut self, reduce_work: ReduceWork<Action>) {
