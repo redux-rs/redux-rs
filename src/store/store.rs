@@ -8,18 +8,18 @@ pub struct Store<State, Action, RootReducer> {
     sender: UnboundedSender<Work<State, Action>>,
     _worker_handle: JoinHandle<()>,
 
-    _types: PhantomData<RootReducer>,
+    _types: PhantomData<RootReducer>
 }
 
 impl<State, Action, RootReducer> Store<State, Action, RootReducer>
 where
     Action: Send + 'static,
     RootReducer: Reducer<State, Action> + Send + 'static,
-    State: Send + 'static,
+    State: Send + 'static
 {
     pub fn new(root_reducer: RootReducer) -> Self
     where
-        State: Default,
+        State: Default
     {
         Self::new_with_state(root_reducer, Default::default())
     }
@@ -35,7 +35,7 @@ where
             sender,
             _worker_handle,
 
-            _types: Default::default(),
+            _types: Default::default()
         }
     }
 
@@ -52,7 +52,7 @@ where
     pub async fn select<S: Selector<State, Result = Result>, Result>(&self, selector: S) -> Result
     where
         S: Selector<State, Result = Result> + Send + 'static,
-        Result: Send + 'static,
+        Result: Send + 'static
     {
         let (work, result_receiver) = Work::select(selector);
         self.dispatch_work(work);
@@ -61,7 +61,7 @@ where
 
     pub async fn state_cloned(&self) -> State
     where
-        State: Clone,
+        State: Clone
     {
         self.select(|state: &State| state.clone()).await
     }
@@ -73,7 +73,7 @@ mod tests {
 
     #[derive(Clone, Debug, PartialEq)]
     struct Counter {
-        value: i32,
+        value: i32
     }
 
     impl Counter {
@@ -99,21 +99,19 @@ mod tests {
 
     enum CounterAction {
         Increment,
-        Decrement,
+        Decrement
     }
 
     fn counter_reducer(state: Counter, action: CounterAction) -> Counter {
         match action {
             CounterAction::Increment => Counter {
-                value: state.value + 1,
+                value: state.value + 1
             },
             CounterAction::Decrement => Counter {
-                value: state.value - 1,
-            },
+                value: state.value - 1
+            }
         }
     }
-
-
 
     #[tokio::test]
     async fn counter_default_state() {

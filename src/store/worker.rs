@@ -7,16 +7,16 @@ use tokio::sync::{oneshot, Notify};
 pub struct StateWorker<State, Action, RootReducer> {
     receiver: UnboundedReceiver<Work<State, Action>>,
     root_reducer: RootReducer,
-    state: Option<State>,
+    state: Option<State>
 }
 
 impl<State, Action, RootReducer> StateWorker<State, Action, RootReducer>
 where
-    RootReducer: Reducer<State, Action>,
+    RootReducer: Reducer<State, Action>
 {
     pub fn new(
         root_reducer: RootReducer,
-        state: State,
+        state: State
     ) -> (Self, UnboundedSender<Work<State, Action>>) {
         let (sender, receiver) = unbounded_channel();
 
@@ -24,9 +24,9 @@ where
             StateWorker {
                 receiver,
                 root_reducer,
-                state: Some(state),
+                state: Some(state)
             },
-            sender,
+            sender
         )
     }
 
@@ -34,7 +34,7 @@ where
         while let Some(work) = self.receiver.recv().await {
             match work {
                 Work::Reduce(reduce_work) => self.reduce(reduce_work),
-                Work::Select(select_work) => select_work.select(self.state.as_ref().unwrap()),
+                Work::Select(select_work) => select_work.select(self.state.as_ref().unwrap())
             }
         }
     }
@@ -53,7 +53,7 @@ where
 
 pub enum Work<State, Action> {
     Reduce(ReduceWork<Action>),
-    Select(Box<dyn SelectWork<State> + Send + 'static>),
+    Select(Box<dyn SelectWork<State> + Send + 'static>)
 }
 
 impl<State, Action> Work<State, Action> {
@@ -66,7 +66,7 @@ impl<State, Action> Work<State, Action> {
     where
         S: Selector<State, Result = Result> + Send + 'static,
         State: Send + 'static,
-        Result: Send + 'static,
+        Result: Send + 'static
     {
         let (work, result_receiver) = SelectWorkImpl::new(selector);
         (Work::Select(Box::new(work)), result_receiver)
@@ -75,7 +75,7 @@ impl<State, Action> Work<State, Action> {
 
 pub struct ReduceWork<Action> {
     action: Action,
-    notify: Arc<Notify>,
+    notify: Arc<Notify>
 }
 
 impl<Action> ReduceWork<Action> {
@@ -84,9 +84,9 @@ impl<Action> ReduceWork<Action> {
         (
             ReduceWork {
                 action,
-                notify: notify.clone(),
+                notify: notify.clone()
             },
-            notify,
+            notify
         )
     }
 }
@@ -97,17 +97,17 @@ pub trait SelectWork<State> {
 
 pub struct SelectWorkImpl<Select, State, Result>
 where
-    Select: Selector<State, Result = Result>,
+    Select: Selector<State, Result = Result>
 {
     selector: Select,
     result_sender: oneshot::Sender<Result>,
 
-    _type: PhantomData<State>,
+    _type: PhantomData<State>
 }
 
 impl<Select, State, Result> SelectWorkImpl<Select, State, Result>
 where
-    Select: Selector<State, Result = Result>,
+    Select: Selector<State, Result = Result>
 {
     pub fn new(selector: Select) -> (Self, oneshot::Receiver<Result>) {
         let (result_sender, result_receiver) = oneshot::channel();
@@ -117,16 +117,16 @@ where
                 selector,
                 result_sender,
 
-                _type: Default::default(),
+                _type: Default::default()
             },
-            result_receiver,
+            result_receiver
         )
     }
 }
 
 impl<Select, State, Result> SelectWork<State> for SelectWorkImpl<Select, State, Result>
 where
-    Select: Selector<State, Result = Result>,
+    Select: Selector<State, Result = Result>
 {
     fn select(self: Box<Self>, state: &State) {
         let selection = self.selector.select(state);
