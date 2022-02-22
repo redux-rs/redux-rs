@@ -1,14 +1,15 @@
+mod mailbox;
 mod worker;
 
+use crate::store::mailbox::Address;
 use crate::{Reducer, Selector};
 use std::marker::PhantomData;
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 use worker::StateWorker;
 use worker::Work;
 
 pub struct Store<State, Action, RootReducer> {
-    sender: UnboundedSender<Work<State, Action>>,
+    worker_address: Address<State, Action>,
     _worker_handle: JoinHandle<()>,
 
     _types: PhantomData<RootReducer>
@@ -28,14 +29,15 @@ where
     }
 
     pub fn new_with_state(root_reducer: RootReducer, state: State) -> Self {
-        let (mut worker, sender) = StateWorker::new(root_reducer, state);
+        let mut worker = StateWorker::new(root_reducer, state);
+        let worker_address = worker.address();
 
         let _worker_handle = tokio::spawn(async move {
             worker.run().await;
         });
 
         Store {
-            sender,
+            worker_address,
             _worker_handle,
 
             _types: Default::default()
@@ -43,7 +45,7 @@ where
     }
 
     fn dispatch_work(&self, work: Work<State, Action>) {
-        let _ = self.sender.send(work);
+        self.worker_address.send(work);
     }
 
     pub async fn dispatch(&self, action: Action) {

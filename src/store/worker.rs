@@ -1,11 +1,11 @@
+use crate::store::mailbox::{Address, Mailbox};
 use crate::{Reducer, Selector};
 use std::marker::PhantomData;
 use std::sync::Arc;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{oneshot, Notify};
 
 pub struct StateWorker<State, Action, RootReducer> {
-    receiver: UnboundedReceiver<Work<State, Action>>,
+    mailbox: Mailbox<State, Action>,
     root_reducer: RootReducer,
     state: Option<State>
 }
@@ -14,24 +14,20 @@ impl<State, Action, RootReducer> StateWorker<State, Action, RootReducer>
 where
     RootReducer: Reducer<State, Action>
 {
-    pub fn new(
-        root_reducer: RootReducer,
-        state: State
-    ) -> (Self, UnboundedSender<Work<State, Action>>) {
-        let (sender, receiver) = unbounded_channel();
+    pub fn new(root_reducer: RootReducer, state: State) -> Self {
+        Self {
+            mailbox: Mailbox::new(),
+            root_reducer,
+            state: Some(state)
+        }
+    }
 
-        (
-            StateWorker {
-                receiver,
-                root_reducer,
-                state: Some(state)
-            },
-            sender
-        )
+    pub fn address(&self) -> Address<State, Action> {
+        self.mailbox.address()
     }
 
     pub async fn run(&mut self) {
-        while let Some(work) = self.receiver.recv().await {
+        while let Some(work) = self.mailbox.recv().await {
             match work {
                 Work::Reduce(reduce_work) => self.reduce(reduce_work),
                 Work::Select(select_work) => select_work.select(self.state.as_ref().unwrap())
