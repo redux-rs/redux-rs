@@ -1,15 +1,17 @@
-mod mailbox;
-mod worker;
-
-use crate::store::mailbox::Address;
-use crate::{Reducer, Selector};
 use std::marker::PhantomData;
 use tokio::task::JoinHandle;
-use worker::StateWorker;
-use worker::Work;
 
-pub struct Store<State, Action, RootReducer> {
-    worker_address: Address<State, Action>,
+use crate::{Reducer, Selector};
+
+mod worker;
+use worker::{Address, Dispatch, Select, StateWorker};
+
+pub struct Store<State, Action, RootReducer>
+where
+    State: Send,
+    RootReducer: Send
+{
+    worker_address: Address<State, Action, RootReducer>,
     _worker_handle: JoinHandle<()>,
 
     _types: PhantomData<RootReducer>
@@ -44,14 +46,8 @@ where
         }
     }
 
-    fn dispatch_work(&self, work: Work<State, Action>) {
-        self.worker_address.send(work);
-    }
-
     pub async fn dispatch(&self, action: Action) {
-        let (work, notifier) = Work::reduce(action);
-        self.dispatch_work(work);
-        notifier.notified().await;
+        self.worker_address.send(Dispatch::new(action)).await;
     }
 
     pub async fn select<S: Selector<State, Result = Result>, Result>(&self, selector: S) -> Result
@@ -59,9 +55,7 @@ where
         S: Selector<State, Result = Result> + Send + 'static,
         Result: Send + 'static
     {
-        let (work, result_receiver) = Work::select(selector);
-        self.dispatch_work(work);
-        return result_receiver.await.unwrap();
+        self.worker_address.send(Select::new(selector)).await
     }
 
     pub async fn state_cloned(&self) -> State

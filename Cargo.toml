@@ -10,6 +10,7 @@ readme = "README.md"
 edition = "2018"
 
 [dependencies]
+async-trait = "0.1.52"
 log = "0.4"
 tokio = { version = "1", features = [ "sync", "rt" ] }
 
