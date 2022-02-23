@@ -10,6 +10,11 @@ use crate::{
 mod worker;
 use worker::{Address, Dispatch, Select, StateWorker, Subscribe};
 
+/// The store is the heart of any redux application, it contains the state of the application.
+///
+/// The state of the store can be modified by dispatching actions to it.
+/// Updates to the state can be observed by subscribing to the store or by writing middleware.
+/// Getting a part of the store or the full store is possible with the select and state_cloned methods.
 pub struct Store<State, Action, RootReducer>
 where
     State: Send,
@@ -27,6 +32,7 @@ where
     RootReducer: Reducer<State, Action> + Send + 'static,
     State: Send + 'static
 {
+    /// Create a new store with the given root reducer and default state
     pub fn new(root_reducer: RootReducer) -> Self
     where
         State: Default
@@ -34,6 +40,7 @@ where
         Self::new_with_state(root_reducer, Default::default())
     }
 
+    /// Create a new store with the given root reducer and the provided state
     pub fn new_with_state(root_reducer: RootReducer, state: State) -> Self {
         let mut worker = StateWorker::new(root_reducer, state);
         let worker_address = worker.address();
@@ -50,10 +57,13 @@ where
         }
     }
 
+    /// Dispatch a new action to the store
     pub async fn dispatch(&self, action: Action) {
         self.worker_address.send(Dispatch::new(action)).await;
     }
 
+    /// Select a part of the state, this is more efficient than copying the entire state all the time.
+    /// In case you still need a full copy of the state, use the state_cloned method.
     pub async fn select<S: Selector<State, Result = Result>, Result>(&self, selector: S) -> Result
     where
         S: Selector<State, Result = Result> + Send + 'static,
@@ -62,6 +72,8 @@ where
         self.worker_address.send(Select::new(selector)).await
     }
 
+    /// Returns a cloned version of the state.
+    /// This is not efficient, if you only need a part of the state use select instead
     pub async fn state_cloned(&self) -> State
     where
         State: Clone
@@ -69,12 +81,15 @@ where
         self.select(|state: &State| state.clone()).await
     }
 
+    /// Subscribe to state changes.
+    /// Every time an action is dispatched the subscriber will be notified after the state is updated
     pub async fn subscribe<S: Subscriber<State> + Send + 'static>(&self, subscriber: S) {
         self.worker_address
             .send(Subscribe::new(Box::new(subscriber)))
             .await
     }
 
+    /// Wrap the store with middleware, see middleware module for more examples
     pub async fn wrap<M, OuterAction>(
         self,
         middleware: M
