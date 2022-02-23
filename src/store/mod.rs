@@ -2,12 +2,13 @@ use async_trait::async_trait;
 use std::marker::PhantomData;
 use tokio::task::JoinHandle;
 
-use crate::{Reducer, Selector, Subscriber};
+use crate::{
+    middleware::{MiddleWare, StoreApi, StoreWithMiddleware},
+    Reducer, Selector, Subscriber
+};
 
 mod worker;
-use crate::middleware::{MiddleWare, StoreApi, StoreWithMiddleware};
-use crate::store::worker::Subscribe;
-use worker::{Address, Dispatch, Select, StateWorker};
+use worker::{Address, Dispatch, Select, StateWorker, Subscribe};
 
 pub struct Store<State, Action, RootReducer>
 where
