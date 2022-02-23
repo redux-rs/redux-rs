@@ -1,9 +1,10 @@
 use std::marker::PhantomData;
 use tokio::task::JoinHandle;
 
-use crate::{Reducer, Selector};
+use crate::{Reducer, Selector, Subscriber};
 
 mod worker;
+use crate::store::worker::Subscribe;
 use worker::{Address, Dispatch, Select, StateWorker};
 
 pub struct Store<State, Action, RootReducer>
@@ -64,11 +65,19 @@ where
     {
         self.select(|state: &State| state.clone()).await
     }
+
+    pub async fn subscribe<S: Subscriber<State> + Send + 'static>(&self, subscriber: S) {
+        self.worker_address
+            .send(Subscribe::new(Box::new(subscriber)))
+            .await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::sync::Arc;
 
     #[derive(Clone, Debug, PartialEq)]
     struct Counter {
@@ -167,5 +176,28 @@ mod tests {
 
         store.dispatch(CounterAction::Decrement).await;
         assert_eq!(43, store.select(|state: &Counter| state.value).await);
+    }
+
+    #[tokio::test]
+    async fn counter_subscribe() {
+        let store = Store::new(counter_reducer);
+        assert_eq!(42, store.select(|state: &Counter| state.value).await);
+
+        let sum = Arc::new(AtomicI32::new(0));
+
+        // Count the total value of all changes
+        let captured_sum = sum.clone();
+        store
+            .subscribe(move |state: &Counter| {
+                captured_sum.fetch_add(state.value, Ordering::Relaxed);
+            })
+            .await;
+
+        store.dispatch(CounterAction::Increment).await;
+        store.dispatch(CounterAction::Increment).await;
+        store.dispatch(CounterAction::Decrement).await;
+
+        // Sum should be: 43 + 44 + 43 = 130
+        assert_eq!(sum.load(Ordering::Relaxed), 130);
     }
 }

@@ -1,15 +1,17 @@
 mod dispatch;
 mod mailbox;
 mod select;
+mod subscribe;
 mod work;
 
 pub use dispatch::Dispatch;
 pub use mailbox::{Address, Mailbox};
 pub use select::Select;
+pub use subscribe::Subscribe;
 pub use work::Work;
 
 use crate::store::worker::work::HandleWork;
-use crate::{Reducer, Selector};
+use crate::{Reducer, Selector, Subscriber};
 use async_trait::async_trait;
 
 pub struct StateWorker<State, Action, RootReducer>
@@ -19,7 +21,9 @@ where
 {
     mailbox: Mailbox<State, Action, RootReducer>,
     root_reducer: RootReducer,
-    state: Option<State>
+    state: Option<State>,
+
+    subscribers: Vec<Box<dyn Subscriber<State> + Send>>
 }
 
 impl<State, Action, RootReducer> StateWorker<State, Action, RootReducer>
@@ -32,7 +36,9 @@ where
         Self {
             mailbox: Mailbox::new(),
             root_reducer,
-            state: Some(state)
+            state: Some(state),
+
+            subscribers: Default::default()
         }
     }
 
@@ -63,6 +69,13 @@ where
         let new_state = self.root_reducer.reduce(old_state, action);
 
         self.state = Some(new_state);
+
+        if !self.subscribers.is_empty() {
+            let new_state = self.state.as_ref().unwrap();
+            for subscriber in &self.subscribers {
+                subscriber.notify(new_state)
+            }
+        }
     }
 }
 
@@ -80,5 +93,19 @@ where
         let state = self.state.as_ref().unwrap();
         let selector = work.into_selector();
         selector.select(state)
+    }
+}
+
+#[async_trait]
+impl<State, Action, RootReducer> HandleWork<Subscribe<State>>
+    for StateWorker<State, Action, RootReducer>
+where
+    RootReducer: Reducer<State, Action>,
+    State: Send,
+    RootReducer: Send
+{
+    async fn handle_work(&mut self, work: Subscribe<State>) {
+        let subscriber = work.into_subscriber();
+        self.subscribers.push(subscriber);
     }
 }

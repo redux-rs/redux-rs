@@ -93,3 +93,29 @@ async fn trait_selector() {
     store.dispatch(Action::Decrement).await;
     assert_eq!(store.select(ValueSelector).await, 43);
 }
+
+#[tokio::test]
+async fn subscribe_to_updates() {
+    // Create a new store with default value 42
+    let store = Store::new_with_state(reducer, Counter(42));
+
+    // Subscribe to every update and print the value
+    store
+        .subscribe(|store: &Counter| println!("New store value: {}", store.0))
+        .await;
+
+    // Verify that the current value is 42
+    assert_eq!(store.select(ValueSelector).await, 42);
+
+    // Dispatch an increment action, the new value should be 43
+    store.dispatch(Action::Increment).await;
+    assert_eq!(store.select(ValueSelector).await, 43);
+
+    // Dispatch another increment action, the new value should be 44
+    store.dispatch(Action::Increment).await;
+    assert_eq!(store.select(ValueSelector).await, 44);
+
+    // Dispatch a decrement action, the new value should be 43
+    store.dispatch(Action::Decrement).await;
+    assert_eq!(store.select(ValueSelector).await, 43);
+}
