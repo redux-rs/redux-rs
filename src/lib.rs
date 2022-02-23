@@ -1,3 +1,4 @@
+mod middleware;
 mod reducer;
 mod selector;
 mod store;

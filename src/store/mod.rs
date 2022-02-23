@@ -1,9 +1,11 @@
+use async_trait::async_trait;
 use std::marker::PhantomData;
 use tokio::task::JoinHandle;
 
 use crate::{Reducer, Selector, Subscriber};
 
 mod worker;
+use crate::middleware::{MiddleWare, StoreApi, StoreWithMiddleware};
 use crate::store::worker::Subscribe;
 use worker::{Address, Dispatch, Select, StateWorker};
 
@@ -70,6 +72,51 @@ where
         self.worker_address
             .send(Subscribe::new(Box::new(subscriber)))
             .await
+    }
+
+    pub async fn wrap<M, OuterAction>(
+        self,
+        middleware: M
+    ) -> StoreWithMiddleware<Self, M, State, Action, OuterAction>
+    where
+        M: MiddleWare<State, OuterAction, Action> + Send + Sync,
+        OuterAction: Send + Sync + 'static,
+        State: Sync,
+        Action: Sync,
+        RootReducer: Sync
+    {
+        StoreWithMiddleware::new(self, middleware).await
+    }
+}
+
+#[async_trait]
+impl<State, Action, RootReducer> StoreApi<State, Action> for Store<State, Action, RootReducer>
+where
+    Action: Send + Sync + 'static,
+    RootReducer: Reducer<State, Action> + Send + Sync + 'static,
+    State: Send + Sync + 'static
+{
+    async fn dispatch(&self, action: Action) {
+        Store::dispatch(self, action).await
+    }
+
+    async fn select<S: Selector<State, Result = Result>, Result>(&self, selector: S) -> Result
+    where
+        S: Selector<State, Result = Result> + Send + 'static,
+        Result: Send + 'static
+    {
+        Store::select(self, selector).await
+    }
+
+    async fn state_cloned(&self) -> State
+    where
+        State: Clone
+    {
+        Store::state_cloned(self).await
+    }
+
+    async fn subscribe<S: Subscriber<State> + Send + 'static>(&self, subscriber: S) {
+        Store::subscribe(self, subscriber).await
     }
 }
 
