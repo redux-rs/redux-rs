@@ -48,8 +48,61 @@ where
 ///
 /// Notice that there's an Action and an InnerAction.
 /// This enables us to send actions which are not of the same type as the underlying store.
+///
+/// ## Logging middleware example
+/// ```
+/// use async_trait::async_trait;
+/// use std::sync::Arc;
+/// use redux_rs::{MiddleWare, Store, StoreApi};
+///
+/// #[derive(Default)]
+/// struct Counter(i8);
+///
+/// #[derive(Debug)]
+/// enum Action {
+///     Increment,
+///     Decrement
+/// }
+///
+/// fn counter_reducer(state: Counter, action: Action) -> Counter {
+///     match action {
+///         Action::Increment => Counter(state.0 + 1),
+///         Action::Decrement => Counter(state.0 - 1),
+///     }
+/// }
+///
+/// // Logger which logs every action before it's dispatched to the store
+/// struct LoggerMiddleware;
+/// #[async_trait]
+/// impl MiddleWare<Counter, Action> for LoggerMiddleware {
+///     async fn dispatch<Inner>(&self, action: Action, inner: &Arc<Inner>)
+///     where
+///         Inner: StoreApi<Counter, Action> + Send + Sync
+///     {
+///         // Print the action
+///         println!("Before action: {:?}", action);
+///
+///         // Dispatch the action to the underlying store
+///         inner.dispatch(action).await;
+///     }
+/// }
+///
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn async_test() {
+/// // Create a new store and wrap it with out new LoggerMiddleware
+/// let store = Store::new(counter_reducer).wrap(LoggerMiddleware).await;
+///
+/// // Dispatch an increment action
+/// // The console should print our text
+/// store.dispatch(Action::Increment).await;
+///
+/// // Dispatch an decrement action
+/// // The console should print our text
+/// store.dispatch(Action::Decrement).await;
+/// # }
+/// ```
 #[async_trait]
-pub trait MiddleWare<State, Action, InnerAction>
+pub trait MiddleWare<State, Action, InnerAction = Action>
 where
     Action: Send + 'static,
     State: Send + 'static,
