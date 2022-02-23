@@ -58,6 +58,9 @@ where
     }
 
     /// Dispatch a new action to the store
+    ///
+    /// Notice that this method takes &self and not &mut self,
+    /// this enables us to dispatch actions from multiple places at once without requiring locks.
     pub async fn dispatch(&self, action: Action) {
         self.worker_address.send(Dispatch::new(action)).await;
     }
