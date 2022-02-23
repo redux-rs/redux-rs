@@ -10,9 +10,9 @@ pub use select::Select;
 pub use subscribe::Subscribe;
 pub use work::Work;
 
-use crate::store::worker::work::HandleWork;
 use crate::{Reducer, Selector, Subscriber};
 use async_trait::async_trait;
+use work::HandleWork;
 
 pub struct StateWorker<State, Action, RootReducer>
 where
