@@ -1,11 +1,21 @@
-//! # redux - A Rust implementation of Redux.
+//! # redux-rs - A Rust implementation of Redux.
 //!
-//! Redux provides a clean way of managing states in an application.
-//! It could be user data such as preferences or information about the state of the program.
+//! Redux-rs is a predictable state container for Rust applications.
+//!
+//! The goal of this project is to provide _similar_ functionality to it's javascript counterpart.
+//! Due to the differences between javascript and rust the api is not exactly the same.
+//!
+//! This project offers the following functionality:
+//! - A lock-free store that you can dispatch actions to with only a shared reference (&Store)
+//! - Flexible middleware that can intercept/modify/launch actions at any time
 //!
 //! ## Concepts
 //!
-//! In Redux data is immutable. The only way to change it is to take it and create some new data by following a set of rules.
+//! Data in the redux store is immutable. The only way to update the data in the store is by dispatching actions to the store.
+//! The data is altered using a provided reducer.
+//!
+//! Middleware can be used introduced side effects when dispatching actions.
+//! An example of a side effect is making an api call.
 //!
 //! ### State
 //!
@@ -35,38 +45,15 @@
 //! ### Reducer
 //!
 //! To actually change the state (read: create a new one), we need what is called a reducer.
-//! It is a simple function which takes in the current state plus the action to perform and returns a new state.
+//! It is a pure function which takes in the current state plus the action to perform and returns a new state.
+//!
+//! Note: A reducer is a pure function: it should not introduce any side-effects.
 //!
 //! ```
-//! # struct State {
-//! #     counter: i8
-//! # }
+//! # #[tokio::main(flavor = "current_thread")]
+//! # async fn async_test() {
+//! # use redux_rs::Store;
 //! #
-//! # enum Action {
-//! #     Increment,
-//! #     Decrement
-//! # }
-//! #
-//! fn reducer(state: &State, action: &Action) -> State {
-//!     match action {
-//!         Action::Increment => State {
-//!             counter: state.counter + 1
-//!         },
-//!         Action::Decrement => State {
-//!             counter: state.counter - 1
-//!         }
-//!     }
-//! }
-//! ```
-//!
-//! Note how the reducer uses the old data to create a new state.
-//!
-//! ### Store
-//!
-//! To put it all together, we use a store which keeps track of a state and provides an easy to use API for dispatching actions.
-//! The store takes the reducer and an initial state.
-//!
-//! ```
 //! # #[derive(Default)]
 //! # struct State {
 //! #     counter: i8
@@ -77,7 +64,42 @@
 //! #     Decrement
 //! # }
 //! #
-//! # fn reducer(state: &State, action: &Action) -> State {
+//! fn reducer(state: State, action: Action) -> State {
+//!     match action {
+//!         Action::Increment => State {
+//!             counter: state.counter + 1
+//!         },
+//!         Action::Decrement => State {
+//!             counter: state.counter - 1
+//!         }
+//!     }
+//! }
+//! # let _ = Store::new(reducer);
+//! # }
+//! ```
+//!
+//! Note how the reducer uses the old data to create a new state.
+//!
+//! ### Store
+//!
+//! To put it all together, we use a store which keeps track of a state and provides an easy to use API for dispatching actions.
+//! The store takes the reducer and an initial state.
+//!
+//! ```
+//! # #[tokio::main(flavor = "current_thread")]
+//! # async fn async_test() {
+//! # use redux_rs::Store;
+//! # #[derive(Default)]
+//! # struct State {
+//! #     counter: i8
+//! # }
+//! #
+//! # enum Action {
+//! #     Increment,
+//! #     Decrement
+//! # }
+//! #
+//! # fn reducer(state: State, action: Action) -> State {
 //! #     match action {
 //! #         Action::Increment => State {
 //! #             counter: state.counter + 1
@@ -89,14 +111,15 @@
 //! # }
 //! #
 //! // The store needs to be mutable as it will change its inner state when dispatching actions.
-//! let mut store = redux_rs::Store::new(reducer, State::default());
+//! let mut store = Store::new(reducer);
 //!
 //! // Let it do its highly complex math.
-//! store.dispatch(Action::Increment);
-//! store.dispatch(Action::Decrement);
+//! store.dispatch(Action::Increment).await;
+//! store.dispatch(Action::Decrement).await;
 //!
 //! // Print the current count.
-//! println!("{}", store.state().counter);
+//! println!("{}", store.select(|state: &State| state.counter).await);
+//! # };
 //! ```
 //!
 //! ### Subscriptions
@@ -105,6 +128,8 @@
 //! They are callbacks with the current state that get called whenever an action gets dispatched.
 //!
 //! ```
+//! # #[tokio::main(flavor = "current_thread")]
+//! # async fn async_test() {
 //! # #[derive(Default)]
 //! # struct State {
 //! #     counter: i8
@@ -115,7 +140,7 @@
 //! #     Decrement
 //! # }
 //! #
-//! # fn reducer(state: &State, action: &Action) -> State {
+//! # fn reducer(state: State, action: Action) -> State {
 //! #     match action {
 //! #         Action::Increment => State {
 //! #             counter: state.counter + 1
@@ -126,30 +151,23 @@
 //! #     }
 //! # }
 //! #
-//! # let mut store = redux_rs::Store::new(reducer, State::default());
+//! # let mut store = redux_rs::Store::new(reducer);
 //! #
 //! store.subscribe(|state: &State| {
 //!      println!("Something changed! Current value: {}", state.counter);
-//! });
+//! }).await;
+//! # }
 //! ```
 
-#![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(not(feature = "std"), feature(alloc))]
-
-#[cfg(not(feature = "std"))]
-extern crate alloc;
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
-#[cfg(feature = "std")]
-use std::vec::Vec;
-
 mod middleware;
+pub mod middlewares;
 mod reducer;
+mod selector;
 mod store;
-mod subscription;
+mod subscriber;
 
-pub use middleware::Middleware;
+pub use middleware::{MiddleWare, StoreApi, StoreWithMiddleware};
 pub use reducer::Reducer;
-#[cfg(not(feature = "devtools"))]
+pub use selector::Selector;
 pub use store::Store;
-pub use subscription::Subscription;
+pub use subscriber::Subscriber;
