@@ -160,6 +160,7 @@
 //! ```
 
 mod middleware;
+pub mod middlewares;
 mod reducer;
 mod selector;
 mod store;
