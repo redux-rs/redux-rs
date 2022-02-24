@@ -40,7 +40,7 @@ pub trait Subscriber<State> {
 
 impl<F, State> Subscriber<State> for F
 where
-    F: Fn(&State)
+    F: Fn(&State),
 {
     fn notify(&self, state: &State) {
         self(state);

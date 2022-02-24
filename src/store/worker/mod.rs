@@ -17,20 +17,20 @@ use work::HandleWork;
 pub struct StateWorker<State, Action, RootReducer>
 where
     State: Send,
-    RootReducer: Send
+    RootReducer: Send,
 {
     mailbox: Mailbox<State, Action, RootReducer>,
     root_reducer: RootReducer,
     state: Option<State>,
 
-    subscribers: Vec<Box<dyn Subscriber<State> + Send>>
+    subscribers: Vec<Box<dyn Subscriber<State> + Send>>,
 }
 
 impl<State, Action, RootReducer> StateWorker<State, Action, RootReducer>
 where
     RootReducer: Reducer<State, Action>,
     State: Send,
-    RootReducer: Send
+    RootReducer: Send,
 {
     pub fn new(root_reducer: RootReducer, state: State) -> Self {
         Self {
@@ -38,7 +38,7 @@ where
             root_reducer,
             state: Some(state),
 
-            subscribers: Default::default()
+            subscribers: Default::default(),
         }
     }
 
@@ -54,13 +54,12 @@ where
 }
 
 #[async_trait]
-impl<State, Action, RootReducer> HandleWork<Dispatch<Action>>
-    for StateWorker<State, Action, RootReducer>
+impl<State, Action, RootReducer> HandleWork<Dispatch<Action>> for StateWorker<State, Action, RootReducer>
 where
     RootReducer: Reducer<State, Action>,
     State: Send,
     RootReducer: Send,
-    Action: Send
+    Action: Send,
 {
     async fn handle_work(&mut self, work: Dispatch<Action>) {
         let action = work.into_action();
@@ -80,14 +79,13 @@ where
 }
 
 #[async_trait]
-impl<State, Action, RootReducer, S, Result> HandleWork<Select<State, S>>
-    for StateWorker<State, Action, RootReducer>
+impl<State, Action, RootReducer, S, Result> HandleWork<Select<State, S>> for StateWorker<State, Action, RootReducer>
 where
     RootReducer: Reducer<State, Action>,
     State: Send,
     RootReducer: Send,
     S: Selector<State, Result = Result> + Send + 'static,
-    Result: Send
+    Result: Send,
 {
     async fn handle_work(&mut self, work: Select<State, S>) -> Result {
         let state = self.state.as_ref().unwrap();
@@ -97,12 +95,11 @@ where
 }
 
 #[async_trait]
-impl<State, Action, RootReducer> HandleWork<Subscribe<State>>
-    for StateWorker<State, Action, RootReducer>
+impl<State, Action, RootReducer> HandleWork<Subscribe<State>> for StateWorker<State, Action, RootReducer>
 where
     RootReducer: Reducer<State, Action>,
     State: Send,
-    RootReducer: Send
+    RootReducer: Send,
 {
     async fn handle_work(&mut self, work: Subscribe<State>) {
         let subscriber = work.into_subscriber();

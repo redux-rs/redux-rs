@@ -4,7 +4,7 @@ struct Counter(i8);
 
 enum Action {
     Increment,
-    Decrement
+    Decrement,
 }
 
 fn reducer(state: Counter, action: Action) -> Counter {
@@ -12,7 +12,7 @@ fn reducer(state: Counter, action: Action) -> Counter {
 
     match action {
         Action::Increment => Counter(current_value + 1),
-        Action::Decrement => Counter(current_value - 1)
+        Action::Decrement => Counter(current_value - 1),
     }
 }
 
@@ -100,9 +100,7 @@ async fn subscribe_to_updates() {
     let store = Store::new_with_state(reducer, Counter(42));
 
     // Subscribe to every update and print the value
-    store
-        .subscribe(|store: &Counter| println!("New store value: {}", store.0))
-        .await;
+    store.subscribe(|store: &Counter| println!("New store value: {}", store.0)).await;
 
     // Verify that the current value is 42
     assert_eq!(store.select(ValueSelector).await, 42);

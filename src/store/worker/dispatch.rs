@@ -2,14 +2,14 @@ use crate::store::worker::Work;
 
 pub struct Dispatch<Action>
 where
-    Action: Send
+    Action: Send,
 {
-    action: Action
+    action: Action,
 }
 
 impl<Action> Dispatch<Action>
 where
-    Action: Send
+    Action: Send,
 {
     pub fn new(action: Action) -> Self {
         Dispatch { action }
@@ -22,7 +22,7 @@ where
 
 impl<Action> Work for Dispatch<Action>
 where
-    Action: Send
+    Action: Send,
 {
     type Result = ();
 }

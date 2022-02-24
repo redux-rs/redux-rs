@@ -11,7 +11,7 @@ use std::sync::Arc;
 pub trait StoreApi<State, Action>
 where
     Action: Send + 'static,
-    State: Send + 'static
+    State: Send + 'static,
 {
     /// Dispatch a new action to the store
     ///
@@ -30,7 +30,7 @@ where
     /// This is not efficient, if you only need a part of the state use select instead
     async fn state_cloned(&self) -> State
     where
-        State: Clone
+        State: Clone,
     {
         self.select(|state: &State| state.clone()).await
     }
@@ -106,7 +106,7 @@ pub trait MiddleWare<State, Action, InnerAction = Action>
 where
     Action: Send + 'static,
     State: Send + 'static,
-    InnerAction: Send + 'static
+    InnerAction: Send + 'static,
 {
     /// This method is called the moment the middleware is wrapped around an underlying store api.
     /// Initialization could be done here.
@@ -115,7 +115,7 @@ where
     #[allow(unused_variables)]
     async fn init<Inner>(&mut self, inner: &Arc<Inner>)
     where
-        Inner: StoreApi<State, InnerAction> + Send + Sync
+        Inner: StoreApi<State, InnerAction> + Send + Sync,
     {
     }
 
@@ -137,22 +137,21 @@ where
     M: MiddleWare<State, OuterAction, InnerAction> + Send + Sync,
     State: Send + Sync + 'static,
     InnerAction: Send + Sync + 'static,
-    OuterAction: Send + Sync + 'static
+    OuterAction: Send + Sync + 'static,
 {
     inner: Arc<Inner>,
     middleware: M,
 
-    _types: PhantomData<(State, InnerAction, OuterAction)>
+    _types: PhantomData<(State, InnerAction, OuterAction)>,
 }
 
-impl<Inner, M, State, InnerAction, OuterAction>
-    StoreWithMiddleware<Inner, M, State, InnerAction, OuterAction>
+impl<Inner, M, State, InnerAction, OuterAction> StoreWithMiddleware<Inner, M, State, InnerAction, OuterAction>
 where
     Inner: StoreApi<State, InnerAction> + Send + Sync,
     M: MiddleWare<State, OuterAction, InnerAction> + Send + Sync,
     State: Send + Sync + 'static,
     InnerAction: Send + Sync + 'static,
-    OuterAction: Send + Sync + 'static
+    OuterAction: Send + Sync + 'static,
 {
     pub(crate) async fn new(inner: Inner, mut middleware: M) -> Self {
         let inner = Arc::new(inner);
@@ -162,33 +161,29 @@ where
         StoreWithMiddleware {
             inner,
             middleware,
-            _types: Default::default()
+            _types: Default::default(),
         }
     }
 
     /// Wrap the store with middleware
-    pub async fn wrap<MNew, NewOuterAction>(
-        self,
-        middleware: MNew
-    ) -> StoreWithMiddleware<Self, MNew, State, OuterAction, NewOuterAction>
+    pub async fn wrap<MNew, NewOuterAction>(self, middleware: MNew) -> StoreWithMiddleware<Self, MNew, State, OuterAction, NewOuterAction>
     where
         MNew: MiddleWare<State, NewOuterAction, OuterAction> + Send + Sync,
         NewOuterAction: Send + Sync + 'static,
-        State: Sync
+        State: Sync,
     {
         StoreWithMiddleware::new(self, middleware).await
     }
 }
 
 #[async_trait]
-impl<Inner, M, State, InnerAction, OuterAction> StoreApi<State, OuterAction>
-    for StoreWithMiddleware<Inner, M, State, InnerAction, OuterAction>
+impl<Inner, M, State, InnerAction, OuterAction> StoreApi<State, OuterAction> for StoreWithMiddleware<Inner, M, State, InnerAction, OuterAction>
 where
     Inner: StoreApi<State, InnerAction> + Send + Sync,
     M: MiddleWare<State, OuterAction, InnerAction> + Send + Sync,
     State: Send + Sync + 'static,
     InnerAction: Send + Sync + 'static,
-    OuterAction: Send + Sync + 'static
+    OuterAction: Send + Sync + 'static,
 {
     async fn dispatch(&self, action: OuterAction) {
         self.middleware.dispatch(action, &self.inner).await
@@ -197,7 +192,7 @@ where
     async fn select<S: Selector<State, Result = Result>, Result>(&self, selector: S) -> Result
     where
         S: Selector<State, Result = Result> + Send + 'static,
-        Result: Send + 'static
+        Result: Send + 'static,
     {
         self.inner.select(selector).await
     }
@@ -215,7 +210,7 @@ mod tests {
 
     #[derive(Default)]
     struct LogStore {
-        logs: Vec<String>
+        logs: Vec<String>,
     }
 
     struct Log(String);
@@ -229,7 +224,7 @@ mod tests {
 
     struct LoggerMiddleware {
         prefix: &'static str,
-        logs: Arc<Mutex<Vec<String>>>
+        logs: Arc<Mutex<Vec<String>>>,
     }
 
     impl LoggerMiddleware {
@@ -247,7 +242,7 @@ mod tests {
     impl MiddleWare<LogStore, Log, Log> for LoggerMiddleware {
         async fn dispatch<Inner>(&self, action: Log, inner: &Arc<Inner>)
         where
-            Inner: StoreApi<LogStore, Log> + Send + Sync
+            Inner: StoreApi<LogStore, Log> + Send + Sync,
         {
             let log_message = action.0.clone();
 
@@ -306,11 +301,7 @@ mod tests {
         let log_middleware_1 = LoggerMiddleware::new("middleware_1", logs.clone());
         let log_middleware_2 = LoggerMiddleware::new("middleware_2", logs.clone());
 
-        let store = Store::new(log_reducer)
-            .wrap(log_middleware_1)
-            .await
-            .wrap(log_middleware_2)
-            .await;
+        let store = Store::new(log_reducer).wrap(log_middleware_1).await.wrap(log_middleware_2).await;
 
         store.dispatch(Log("Log 1".to_string())).await;
 

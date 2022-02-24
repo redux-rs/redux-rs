@@ -20,19 +20,19 @@ use redux_rs::{Selector, Store};
 #[derive(Default, Debug)]
 struct State {
     todos: Vec<Todo>,
-    visibility_filter: VisibilityFilter
+    visibility_filter: VisibilityFilter,
 }
 
 #[derive(Debug)]
 struct Todo {
     text: String,
-    completed: bool
+    completed: bool,
 }
 
 #[derive(Debug)]
 enum VisibilityFilter {
     ShowAll,
-    ShowCompleted
+    ShowCompleted,
 }
 
 impl Default for VisibilityFilter {
@@ -44,17 +44,14 @@ impl Default for VisibilityFilter {
 enum Action {
     AddTodo { text: String },
     ToggleTodo { index: usize },
-    SetVisibilityFilter { filter: VisibilityFilter }
+    SetVisibilityFilter { filter: VisibilityFilter },
 }
 
 fn reducer(mut state: State, action: Action) -> State {
     match action {
         Action::AddTodo { text } => State {
             todos: {
-                state.todos.push(Todo {
-                    text,
-                    completed: false
-                });
+                state.todos.push(Todo { text, completed: false });
                 state.todos
             },
             ..state
@@ -71,7 +68,7 @@ fn reducer(mut state: State, action: Action) -> State {
         Action::SetVisibilityFilter { filter } => State {
             visibility_filter: filter,
             ..state
-        }
+        },
     }
 }
 
@@ -87,42 +84,31 @@ impl Selector<State> for SelectNumberCompletedTodos {
 #[tokio::main]
 async fn main() {
     let store = Store::new(reducer);
-    store
-        .subscribe(|state: &State| println!("New state: {:?}", state))
-        .await;
+    store.subscribe(|state: &State| println!("New state: {:?}", state)).await;
 
     // Print number of completed tasks
-    println!(
-        "Number of completed tasks: {}",
-        store.select(SelectNumberCompletedTodos).await
-    );
+    println!("Number of completed tasks: {}", store.select(SelectNumberCompletedTodos).await);
 
     // { type: 'ADD_TODO', text: 'Go to swimming pool' }
     store
         .dispatch(Action::AddTodo {
-            text: "Go to swimming pool".to_string()
+            text: "Go to swimming pool".to_string(),
         })
         .await;
 
     // Print number of completed tasks
-    println!(
-        "Number of completed tasks: {}",
-        store.select(SelectNumberCompletedTodos).await
-    );
+    println!("Number of completed tasks: {}", store.select(SelectNumberCompletedTodos).await);
 
     // { type: 'TOGGLE_TODO', index: 0 }
     store.dispatch(Action::ToggleTodo { index: 0 }).await;
 
     // Print number of completed tasks
-    println!(
-        "Number of completed tasks: {}",
-        store.select(SelectNumberCompletedTodos).await
-    );
+    println!("Number of completed tasks: {}", store.select(SelectNumberCompletedTodos).await);
 
     // { type: 'SET_VISIBILITY_FILTER', filter: 'SHOW_ALL' }
     store
         .dispatch(Action::SetVisibilityFilter {
-            filter: VisibilityFilter::ShowAll
+            filter: VisibilityFilter::ShowAll,
         })
         .await;
 }

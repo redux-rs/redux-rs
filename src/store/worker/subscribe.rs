@@ -4,14 +4,14 @@ use std::marker::PhantomData;
 
 pub struct Subscribe<State> {
     subscriber: Box<dyn Subscriber<State> + Send>,
-    _types: PhantomData<State>
+    _types: PhantomData<State>,
 }
 
 impl<State> Subscribe<State> {
     pub fn new(subscriber: Box<dyn Subscriber<State> + Send>) -> Self {
         Subscribe {
             subscriber,
-            _types: Default::default()
+            _types: Default::default(),
         }
     }
 
@@ -22,7 +22,7 @@ impl<State> Subscribe<State> {
 
 impl<State> Work for Subscribe<State>
 where
-    State: Send
+    State: Send,
 {
     type Result = ();
 }

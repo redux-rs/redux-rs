@@ -66,7 +66,7 @@ pub trait Selector<State> {
 
 impl<F, State, Result> Selector<State> for F
 where
-    F: Fn(&State) -> Result
+    F: Fn(&State) -> Result,
 {
     type Result = Result;
 

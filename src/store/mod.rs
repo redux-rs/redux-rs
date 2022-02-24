@@ -4,7 +4,7 @@ use tokio::task::JoinHandle;
 
 use crate::{
     middleware::{MiddleWare, StoreApi, StoreWithMiddleware},
-    Reducer, Selector, Subscriber
+    Reducer, Selector, Subscriber,
 };
 
 mod worker;
@@ -18,24 +18,24 @@ use worker::{Address, Dispatch, Select, StateWorker, Subscribe};
 pub struct Store<State, Action, RootReducer>
 where
     State: Send,
-    RootReducer: Send
+    RootReducer: Send,
 {
     worker_address: Address<State, Action, RootReducer>,
     _worker_handle: JoinHandle<()>,
 
-    _types: PhantomData<RootReducer>
+    _types: PhantomData<RootReducer>,
 }
 
 impl<State, Action, RootReducer> Store<State, Action, RootReducer>
 where
     Action: Send + 'static,
     RootReducer: Reducer<State, Action> + Send + 'static,
-    State: Send + 'static
+    State: Send + 'static,
 {
     /// Create a new store with the given root reducer and default state
     pub fn new(root_reducer: RootReducer) -> Self
     where
-        State: Default
+        State: Default,
     {
         Self::new_with_state(root_reducer, Default::default())
     }
@@ -53,7 +53,7 @@ where
             worker_address,
             _worker_handle,
 
-            _types: Default::default()
+            _types: Default::default(),
         }
     }
 
@@ -70,7 +70,7 @@ where
     pub async fn select<S: Selector<State, Result = Result>, Result>(&self, selector: S) -> Result
     where
         S: Selector<State, Result = Result> + Send + 'static,
-        Result: Send + 'static
+        Result: Send + 'static,
     {
         self.worker_address.send(Select::new(selector)).await
     }
@@ -79,7 +79,7 @@ where
     /// This is not efficient, if you only need a part of the state use select instead
     pub async fn state_cloned(&self) -> State
     where
-        State: Clone
+        State: Clone,
     {
         self.select(|state: &State| state.clone()).await
     }
@@ -87,22 +87,17 @@ where
     /// Subscribe to state changes.
     /// Every time an action is dispatched the subscriber will be notified after the state is updated
     pub async fn subscribe<S: Subscriber<State> + Send + 'static>(&self, subscriber: S) {
-        self.worker_address
-            .send(Subscribe::new(Box::new(subscriber)))
-            .await
+        self.worker_address.send(Subscribe::new(Box::new(subscriber))).await
     }
 
     /// Wrap the store with middleware, see middleware module for more examples
-    pub async fn wrap<M, OuterAction>(
-        self,
-        middleware: M
-    ) -> StoreWithMiddleware<Self, M, State, Action, OuterAction>
+    pub async fn wrap<M, OuterAction>(self, middleware: M) -> StoreWithMiddleware<Self, M, State, Action, OuterAction>
     where
         M: MiddleWare<State, OuterAction, Action> + Send + Sync,
         OuterAction: Send + Sync + 'static,
         State: Sync,
         Action: Sync,
-        RootReducer: Sync
+        RootReducer: Sync,
     {
         StoreWithMiddleware::new(self, middleware).await
     }
@@ -113,7 +108,7 @@ impl<State, Action, RootReducer> StoreApi<State, Action> for Store<State, Action
 where
     Action: Send + Sync + 'static,
     RootReducer: Reducer<State, Action> + Send + Sync + 'static,
-    State: Send + Sync + 'static
+    State: Send + Sync + 'static,
 {
     async fn dispatch(&self, action: Action) {
         Store::dispatch(self, action).await
@@ -122,14 +117,14 @@ where
     async fn select<S: Selector<State, Result = Result>, Result>(&self, selector: S) -> Result
     where
         S: Selector<State, Result = Result> + Send + 'static,
-        Result: Send + 'static
+        Result: Send + 'static,
     {
         Store::select(self, selector).await
     }
 
     async fn state_cloned(&self) -> State
     where
-        State: Clone
+        State: Clone,
     {
         Store::state_cloned(self).await
     }
@@ -147,7 +142,7 @@ mod tests {
 
     #[derive(Clone, Debug, PartialEq)]
     struct Counter {
-        value: i32
+        value: i32,
     }
 
     impl Counter {
@@ -173,17 +168,13 @@ mod tests {
 
     enum CounterAction {
         Increment,
-        Decrement
+        Decrement,
     }
 
     fn counter_reducer(state: Counter, action: CounterAction) -> Counter {
         match action {
-            CounterAction::Increment => Counter {
-                value: state.value + 1
-            },
-            CounterAction::Decrement => Counter {
-                value: state.value - 1
-            }
+            CounterAction::Increment => Counter { value: state.value + 1 },
+            CounterAction::Decrement => Counter { value: state.value - 1 },
         }
     }
 

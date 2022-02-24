@@ -4,20 +4,20 @@ use std::marker::PhantomData;
 
 pub struct Select<State, S>
 where
-    S: Selector<State>
+    S: Selector<State>,
 {
     selector: S,
-    _types: PhantomData<State>
+    _types: PhantomData<State>,
 }
 
 impl<State, S> Select<State, S>
 where
-    S: Selector<State>
+    S: Selector<State>,
 {
     pub fn new(selector: S) -> Self {
         Select {
             selector,
-            _types: Default::default()
+            _types: Default::default(),
         }
     }
 
@@ -30,7 +30,7 @@ impl<State, S> Work for Select<State, S>
 where
     State: Send,
     S: Selector<State> + Send,
-    S::Result: Send
+    S::Result: Send,
 {
     type Result = S::Result;
 }
