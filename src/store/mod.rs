@@ -93,7 +93,7 @@ where
     /// Wrap the store with middleware, see middleware module for more examples
     pub async fn wrap<M, OuterAction>(self, middleware: M) -> StoreWithMiddleware<Self, M, State, Action, OuterAction>
     where
-        M: MiddleWare<State, OuterAction, Action> + Send + Sync,
+        M: MiddleWare<State, OuterAction, Self, Action> + Send + Sync,
         OuterAction: Send + Sync + 'static,
         State: Sync,
         Action: Sync,
