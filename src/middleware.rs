@@ -74,10 +74,11 @@ where
 /// // Logger which logs every action before it's dispatched to the store
 /// struct LoggerMiddleware;
 /// #[async_trait]
-/// impl MiddleWare<Counter, Action> for LoggerMiddleware {
-///     async fn dispatch<Inner>(&self, action: Action, inner: &Arc<Inner>)
+/// impl<Inner> MiddleWare<Counter, Action, Inner> for LoggerMiddleware
 ///     where
-///         Inner: StoreApi<Counter, Action> + Send + Sync
+/// Inner: StoreApi<Counter, Action> + Send + Sync
+/// {
+///     async fn dispatch(&self, action: Action, inner: &Arc<Inner>)
 ///     {
 ///         // Print the action
 ///         println!("Before action: {:?}", action);
@@ -102,22 +103,19 @@ where
 /// # }
 /// ```
 #[async_trait]
-pub trait MiddleWare<State, Action, InnerAction = Action>
+pub trait MiddleWare<State, Action, Inner, InnerAction = Action>
 where
     Action: Send + 'static,
     State: Send + 'static,
     InnerAction: Send + 'static,
+    Inner: StoreApi<State, InnerAction> + Send + Sync,
 {
     /// This method is called the moment the middleware is wrapped around an underlying store api.
     /// Initialization could be done here.
     ///
     /// For example, you could launch an "application started" action
     #[allow(unused_variables)]
-    async fn init<Inner>(&mut self, inner: &Arc<Inner>)
-    where
-        Inner: StoreApi<State, InnerAction> + Send + Sync,
-    {
-    }
+    async fn init(&mut self, inner: &Arc<Inner>) {}
 
     /// This method is called every time an action is dispatched to the store.
     ///
@@ -125,16 +123,14 @@ where
     /// You could also do certain actions before or after launching a specific/every action.
     ///
     /// NOTE: In the middleware you need to call `inner.dispatch(action).await;` otherwise no actions will be send to the underlying StoreApi (and eventually store)
-    async fn dispatch<Inner>(&self, action: Action, inner: &Arc<Inner>)
-    where
-        Inner: StoreApi<State, InnerAction> + Send + Sync;
+    async fn dispatch(&self, action: Action, inner: &Arc<Inner>);
 }
 
 /// Store which ties an underlying store and middleware together.
 pub struct StoreWithMiddleware<Inner, M, State, InnerAction, OuterAction>
 where
     Inner: StoreApi<State, InnerAction> + Send + Sync,
-    M: MiddleWare<State, OuterAction, InnerAction> + Send + Sync,
+    M: MiddleWare<State, OuterAction, Inner, InnerAction> + Send + Sync,
     State: Send + Sync + 'static,
     InnerAction: Send + Sync + 'static,
     OuterAction: Send + Sync + 'static,
@@ -148,7 +144,7 @@ where
 impl<Inner, M, State, InnerAction, OuterAction> StoreWithMiddleware<Inner, M, State, InnerAction, OuterAction>
 where
     Inner: StoreApi<State, InnerAction> + Send + Sync,
-    M: MiddleWare<State, OuterAction, InnerAction> + Send + Sync,
+    M: MiddleWare<State, OuterAction, Inner, InnerAction> + Send + Sync,
     State: Send + Sync + 'static,
     InnerAction: Send + Sync + 'static,
     OuterAction: Send + Sync + 'static,
@@ -168,7 +164,7 @@ where
     /// Wrap the store with middleware
     pub async fn wrap<MNew, NewOuterAction>(self, middleware: MNew) -> StoreWithMiddleware<Self, MNew, State, OuterAction, NewOuterAction>
     where
-        MNew: MiddleWare<State, NewOuterAction, OuterAction> + Send + Sync,
+        MNew: MiddleWare<State, NewOuterAction, Self, OuterAction> + Send + Sync,
         NewOuterAction: Send + Sync + 'static,
         State: Sync,
     {
@@ -180,7 +176,7 @@ where
 impl<Inner, M, State, InnerAction, OuterAction> StoreApi<State, OuterAction> for StoreWithMiddleware<Inner, M, State, InnerAction, OuterAction>
 where
     Inner: StoreApi<State, InnerAction> + Send + Sync,
-    M: MiddleWare<State, OuterAction, InnerAction> + Send + Sync,
+    M: MiddleWare<State, OuterAction, Inner, InnerAction> + Send + Sync,
     State: Send + Sync + 'static,
     InnerAction: Send + Sync + 'static,
     OuterAction: Send + Sync + 'static,
@@ -239,11 +235,11 @@ mod tests {
     }
 
     #[async_trait]
-    impl MiddleWare<LogStore, Log, Log> for LoggerMiddleware {
-        async fn dispatch<Inner>(&self, action: Log, inner: &Arc<Inner>)
-        where
-            Inner: StoreApi<LogStore, Log> + Send + Sync,
-        {
+    impl<Inner> MiddleWare<LogStore, Log, Inner> for LoggerMiddleware
+    where
+        Inner: StoreApi<LogStore, Log> + Send + Sync,
+    {
+        async fn dispatch(&self, action: Log, inner: &Arc<Inner>) {
             let log_message = action.0.clone();
 
             // Simulate logging to the console, we log to a vec so we can unit test

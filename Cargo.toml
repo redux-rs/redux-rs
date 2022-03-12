@@ -16,12 +16,14 @@ log = { version = "0.4", optional = true }
 tokio = { version = "1", features = [ "sync", "rt" ] }
 
 [dev-dependencies]
-tokio = { version = "1", features = [ "sync", "rt", "rt-multi-thread", "macros" ] }
+tokio = { version = "1", features = [ "sync", "rt", "rt-multi-thread", "time", "macros" ] }
 
 [features]
 default = []
 middleware_logger = [ "log" ]
+middleware_thunk = []
 example_logger_middleware_dependencies = [ "middleware_logger", "env_logger" ]
+example_thunk_middleware_dependencies = [ "middleware_thunk" ]
 
 [[example]]
 name = "basic_todo"
@@ -29,3 +31,7 @@ name = "basic_todo"
 [[example]]
 name = "logger_middleware"
 required-features = [ "example_logger_middleware_dependencies" ]
+
+[[example]]
+name = "thunk_middleware"
+required-features = [ "example_thunk_middleware_dependencies" ]

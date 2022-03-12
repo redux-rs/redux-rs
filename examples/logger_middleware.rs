@@ -1,5 +1,5 @@
 use log::{Level, LevelFilter};
-use redux_rs::middlewares::LoggerMiddleware;
+use redux_rs::middlewares::logger::LoggerMiddleware;
 use redux_rs::{Store, StoreApi};
 
 // Example showing how to use the logger middleware
