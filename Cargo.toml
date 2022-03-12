@@ -23,6 +23,7 @@ default = []
 middleware_logger = [ "log" ]
 middleware_thunk = []
 example_logger_middleware_dependencies = [ "middleware_logger", "env_logger" ]
+example_thunk_middleware_dependencies = [ "middleware_thunk" ]
 
 [[example]]
 name = "basic_todo"
@@ -30,3 +31,7 @@ name = "basic_todo"
 [[example]]
 name = "logger_middleware"
 required-features = [ "example_logger_middleware_dependencies" ]
+
+[[example]]
+name = "thunk_middleware"
+required-features = [ "example_thunk_middleware_dependencies" ]
