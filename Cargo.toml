@@ -1,6 +1,6 @@
 [package]
 name = "redux-rs"
-version = "0.3.2"
+version = "0.3.3"
 description = "A Rust implementation of Redux."
 authors = ["Jeroen Vervaeke <jeroen@vervaeke.nu>", "Jan Baudisch <dev@baudisch.xyz>"]
 license = "MIT"
