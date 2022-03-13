@@ -2,11 +2,11 @@
 //!
 //! Redux-rs is a predictable state container for Rust applications.
 //!
-//! The goal of this project is to provide _similar_ functionality to it's javascript counterpart.
-//! Due to the differences between javascript and rust the api is not exactly the same.
+//! The goal of this project is to provide _similar_ functionality as its Javascript counterpart.
+//! However, due to the differences between Javascript and Rust, the API is not exactly the same.
 //!
 //! This project offers the following functionality:
-//! - A lock-free store that you can dispatch actions to with only a shared reference (&Store)
+//! - A lock-free store, where you can dispatch actions to, with only a shared reference (`&Store`)
 //! - Flexible middleware that can intercept/modify/launch actions at any time
 //!
 //! ## Concepts
@@ -14,14 +14,15 @@
 //! Data in the redux store is immutable. The only way to update the data in the store is by dispatching actions to the store.
 //! The data is altered using a provided reducer.
 //!
-//! Middleware can be used introduced side effects when dispatching actions.
-//! An example of a side effect is making an api call.
+//! Middleware can be used to introduce side effects when dispatching actions.
+//! An example of a side effect is making an API call.
 //!
 //! ### State
 //!
-//! A state is the form of data Redux manages. Theoretically it can be anything, but for an easy explanation let's take the following example:
-//! We have a simple counter application. It does nothing more than counting.
-//! Our state would look the following:
+//! A state is the form of data that Redux manages. 
+//! Theoretically it could be anything, but as an example, let's consider a simple counter.
+//! The counter can only increment and decrement.
+//! The state would look like this:
 //!
 //! ```
 //! #[derive(Default)]
@@ -32,8 +33,8 @@
 //!
 //! ### Actions
 //!
-//! To change the state we need to dispatch actions. In Rust, they would usually be represented by an enum.
-//! For the counter, we want to increment and decrement it.
+//! In order to change the state, we need to dispatch actions. In Rust, the different actions would usually be represented by an enum.
+//! In the case of our counter example, we want to be able to increment and decrement the counter value.
 //!
 //! ```
 //! enum Action {
@@ -44,10 +45,10 @@
 //!
 //! ### Reducer
 //!
-//! To actually change the state (read: create a new one), we need what is called a reducer.
-//! It is a pure function which takes in the current state plus the action to perform and returns a new state.
+//! To actually change the state (read: create a new one), we need what is called a **reducer**.
+//! A reducer is a pure function which takes in the current state plus the action to perform and returns a new state.
 //!
-//! Note: A reducer is a pure function: it should not introduce any side-effects.
+//! >Note: A reducer is a pure function: it should not introduce any side-effects.
 //!
 //! ```
 //! # #[tokio::main(flavor = "current_thread")]
@@ -82,7 +83,7 @@
 //!
 //! ### Store
 //!
-//! To put it all together, we use a store which keeps track of a state and provides an easy to use API for dispatching actions.
+//! To put it all together, we use a store that keeps track of a state and provides an easy to use API for dispatching actions.
 //! The store takes the reducer and an initial state.
 //!
 //! ```
@@ -125,7 +126,7 @@
 //! ### Subscriptions
 //!
 //! Sometimes one might want to listen to changes happening. This is where subscriptions come in.
-//! They are callbacks with the current state that get called whenever an action gets dispatched.
+//! Subscriptions are callbacks with the current state that get called whenever an action gets dispatched.
 //!
 //! ```
 //! # #[tokio::main(flavor = "current_thread")]
