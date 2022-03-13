@@ -1,6 +1,6 @@
 [package]
 name = "redux-rs"
-version = "0.3.1"
+version = "0.3.2"
 description = "A Rust implementation of Redux."
 authors = ["Jeroen Vervaeke <jeroen@vervaeke.nu>", "Jan Baudisch <dev@baudisch.xyz>"]
 license = "MIT"
@@ -8,6 +8,9 @@ homepage = "https://github.com/redux-rs/redux-rs"
 repository = "https://github.com/redux-rs/redux-rs.git"
 readme = "README.md"
 edition = "2018"
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
 async-trait = "0.1.52"
