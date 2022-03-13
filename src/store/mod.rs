@@ -110,8 +110,8 @@ where
     RootReducer: Reducer<State, Action> + Send + Sync + 'static,
     State: Send + Sync + 'static,
 {
-    async fn dispatch(&self, action: Action) {
-        Store::dispatch(self, action).await
+    async fn dispatch<A: Into<Action> + Send>(&self, action: A) {
+        Store::dispatch(self, action.into()).await
     }
 
     async fn select<S: Selector<State, Result = Result>, Result>(&self, selector: S) -> Result

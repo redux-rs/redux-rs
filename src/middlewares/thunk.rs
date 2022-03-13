@@ -14,7 +14,7 @@ use std::sync::Arc;
 /// use std::sync::Arc;
 /// use std::time::Duration;
 /// use redux_rs::{Store, StoreApi};
-/// use redux_rs::middlewares::thunk::{ActionOrThunk, ThunkMiddleware, Thunk};
+/// use redux_rs::middlewares::thunk::{ActionOrThunk, ThunkMiddleware, Thunk, thunk};
 /// use tokio::time::sleep;
 ///
 /// #[derive(Default, Debug, PartialEq)]
@@ -60,7 +60,7 @@ use std::sync::Arc;
 /// }
 /// # async fn async_test() {
 /// let store = Store::new(user_reducer).wrap(ThunkMiddleware).await;
-/// store.dispatch(ActionOrThunk::Thunk(Box::new(load_users))).await;
+/// store.dispatch(thunk(load_users)).await;
 ///
 /// let users = store.select(|state: &UserState| state.users.clone()).await;
 /// assert_eq!(users, vec![]);
@@ -90,7 +90,7 @@ use std::sync::Arc;
 /// use std::sync::Arc;
 /// use std::time::Duration;
 /// use redux_rs::{Store, StoreApi};
-/// use redux_rs::middlewares::thunk::{ActionOrThunk, ThunkMiddleware, Thunk};
+/// use redux_rs::middlewares::thunk::{ActionOrThunk, ThunkMiddleware, Thunk, thunk};
 /// use tokio::time::sleep;
 ///
 /// #[derive(Default, Debug, PartialEq)]
@@ -143,7 +143,7 @@ use std::sync::Arc;
 /// }
 /// # async fn async_test() {
 /// let store = Store::new(user_reducer).wrap(ThunkMiddleware).await;
-/// store.dispatch(ActionOrThunk::Thunk(Box::new(LoadUsersThunk))).await;
+/// store.dispatch(thunk(LoadUsersThunk)).await;
 ///
 /// let users = store.select(|state: &UserState| state.users.clone()).await;
 /// assert_eq!(users, vec![]);
@@ -201,6 +201,27 @@ where
     Thunk(Box<dyn Thunk<State, Action, Api> + Send + Sync>),
 }
 
+pub fn thunk<T, State, Action, Api>(t: T) -> ActionOrThunk<State, Action, Api>
+where
+    T: Thunk<State, Action, Api> + Send + Sync + 'static,
+    Action: Send + 'static,
+    State: Send + 'static,
+    Api: StoreApi<State, Action> + Send + Sync + 'static,
+{
+    ActionOrThunk::Thunk(Box::new(t))
+}
+
+impl<State, Action, Api> From<Action> for ActionOrThunk<State, Action, Api>
+where
+    Action: Send + 'static,
+    State: Send + 'static,
+    Api: StoreApi<State, Action> + Send + Sync + 'static,
+{
+    fn from(action: Action) -> Self {
+        ActionOrThunk::Action(action)
+    }
+}
+
 #[async_trait]
 pub trait Thunk<State, Action, Api>
 where
@@ -247,7 +268,7 @@ mod tests {
         UsersLoaded { users: Vec<User> },
     }
 
-    fn user_reducer(state: UserState, action: UserAction) -> UserState {
+    fn user_reducer(_state: UserState, action: UserAction) -> UserState {
         match action {
             UserAction::UsersLoaded { users } => UserState { users },
         }
@@ -284,7 +305,7 @@ mod tests {
     #[tokio::test]
     async fn load_users_thunk() {
         let store = Store::new(user_reducer).wrap(ThunkMiddleware).await;
-        store.dispatch(ActionOrThunk::Thunk(Box::new(LoadUsersThunk))).await;
+        store.dispatch(thunk(LoadUsersThunk)).await;
 
         let users = store.select(|state: &UserState| state.users.clone()).await;
         assert_eq!(users, vec![]);
@@ -332,7 +353,7 @@ mod tests {
                 .await;
         }
 
-        store.dispatch(ActionOrThunk::Thunk(Box::new(load_users))).await;
+        store.dispatch(thunk(load_users)).await;
 
         let users = store.select(|state: &UserState| state.users.clone()).await;
         assert_eq!(users, vec![]);
