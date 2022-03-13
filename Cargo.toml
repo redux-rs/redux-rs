@@ -33,5 +33,9 @@ name = "logger_middleware"
 required-features = [ "example_logger_middleware_dependencies" ]
 
 [[example]]
-name = "thunk_middleware"
+name = "thunk_middleware_fn"
+required-features = [ "example_thunk_middleware_dependencies" ]
+
+[[example]]
+name = "thunk_middleware_trait"
 required-features = [ "example_thunk_middleware_dependencies" ]
