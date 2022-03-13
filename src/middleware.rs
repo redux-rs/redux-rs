@@ -17,7 +17,7 @@ where
     ///
     /// Notice that this method takes &self and not &mut self,
     /// this enables us to dispatch actions from multiple places at once without requiring locks.
-    async fn dispatch(&self, action: Action);
+    async fn dispatch<A: Into<Action> + Send>(&self, action: A);
 
     /// Select a part of the state, this is more efficient than copying the entire state all the time.
     /// In case you still need a full copy of the state, use the state_cloned method.
@@ -181,8 +181,8 @@ where
     InnerAction: Send + Sync + 'static,
     OuterAction: Send + Sync + 'static,
 {
-    async fn dispatch(&self, action: OuterAction) {
-        self.middleware.dispatch(action, &self.inner).await
+    async fn dispatch<A: Into<OuterAction> + Send>(&self, action: A) {
+        self.middleware.dispatch(action.into(), &self.inner).await
     }
 
     async fn select<S: Selector<State, Result = Result>, Result>(&self, selector: S) -> Result
