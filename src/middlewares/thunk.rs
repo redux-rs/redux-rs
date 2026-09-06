@@ -1,378 +1,128 @@
-use crate::{MiddleWare, StoreApi};
-use async_trait::async_trait;
-use std::future::Future;
-use std::sync::Arc;
+use std::{
+    future::Future,
+    marker::PhantomData,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
-/// # Thunk middleware
-/// Thunk middleware enables us to introduce side-effects in a redux application.
-///
-/// With this middleware you can dispatch actions and thunks to your store.
-///
-/// ## Fn example
-/// ```
-/// use async_trait::async_trait;
-/// use std::sync::Arc;
-/// use std::time::Duration;
-/// use redux_rs::{Store, StoreApi};
-/// use redux_rs::middlewares::thunk::{ActionOrThunk, ThunkMiddleware, Thunk, thunk};
-/// use tokio::time::sleep;
-///
-/// #[derive(Default, Debug, PartialEq)]
-/// struct UserState {
-///     users: Vec<User>,
-/// }
-///
-/// #[derive(Clone, Debug, PartialEq)]
-/// struct User {
-///     id: u8,
-///     name: String,
-/// }
-///
-/// enum UserAction {
-///     UsersLoaded { users: Vec<User> },
-/// }
-///
-/// fn user_reducer(state: UserState, action: UserAction) -> UserState {
-///     match action {
-///         UserAction::UsersLoaded { users } => UserState { users },
-///     }
-/// }
-///
-/// async fn load_users(store_api: Arc<impl StoreApi<UserState, UserAction>>) {
-///     // Emulate api call by delaying for 100 ms
-///     sleep(Duration::from_millis(100)).await;
-///
-///     // Return the data to the store
-///     store_api
-///         .dispatch(UserAction::UsersLoaded {
-///             users: vec![
-///                 User {
-///                     id: 0,
-///                     name: "John Doe".to_string(),
-///                 },
-///                 User {
-///                     id: 1,
-///                     name: "Jane Doe".to_string(),
-///                 },
-///             ],
-///         })
-///         .await;
-/// }
-/// # async fn async_test() {
-/// let store = Store::new(user_reducer).wrap(ThunkMiddleware).await;
-/// store.dispatch(thunk(load_users)).await;
-///
-/// let users = store.select(|state: &UserState| state.users.clone()).await;
-/// assert_eq!(users, vec![]);
-///
-/// sleep(Duration::from_millis(200)).await;
-///
-/// let users = store.select(|state: &UserState| state.users.clone()).await;
-/// assert_eq!(
-///     users,
-///     vec![
-///         User {
-///             id: 0,
-///             name: "John Doe".to_string(),
-///         },
-///         User {
-///             id: 1,
-///             name: "Jane Doe".to_string(),
-///         },
-///     ]
-/// );
-/// # }
-/// ```
-///
-/// ## Trait example
-/// ```
-/// use async_trait::async_trait;
-/// use std::sync::Arc;
-/// use std::time::Duration;
-/// use redux_rs::{Store, StoreApi};
-/// use redux_rs::middlewares::thunk::{ActionOrThunk, ThunkMiddleware, Thunk, thunk};
-/// use tokio::time::sleep;
-///
-/// #[derive(Default, Debug, PartialEq)]
-/// struct UserState {
-///     users: Vec<User>,
-/// }
-///
-/// #[derive(Clone, Debug, PartialEq)]
-/// struct User {
-///     id: u8,
-///     name: String,
-/// }
-///
-/// enum UserAction {
-///     UsersLoaded { users: Vec<User> },
-/// }
-///
-/// fn user_reducer(state: UserState, action: UserAction) -> UserState {
-///     match action {
-///         UserAction::UsersLoaded { users } => UserState { users },
-///     }
-/// }
-///
-/// struct LoadUsersThunk;
-/// #[async_trait]
-/// impl<Api> Thunk<UserState, UserAction, Api> for LoadUsersThunk
-///     where
-///         Api: StoreApi<UserState, UserAction> + Send + Sync + 'static,
-/// {
-///     async fn execute(&self, store_api: Arc<Api>) {
-///         // Emulate api call by delaying for 100 ms
-///         sleep(Duration::from_millis(100)).await;
-///
-///         // Return the data to the store
-///         store_api
-///             .dispatch(UserAction::UsersLoaded {
-///                 users: vec![
-///                     User {
-///                         id: 0,
-///                         name: "John Doe".to_string(),
-///                     },
-///                     User {
-///                         id: 1,
-///                         name: "Jane Doe".to_string(),
-///                     },
-///                 ],
-///             })
-///             .await;
-///     }
-/// }
-/// # async fn async_test() {
-/// let store = Store::new(user_reducer).wrap(ThunkMiddleware).await;
-/// store.dispatch(thunk(LoadUsersThunk)).await;
-///
-/// let users = store.select(|state: &UserState| state.users.clone()).await;
-/// assert_eq!(users, vec![]);
-///
-/// sleep(Duration::from_millis(200)).await;
-///
-/// let users = store.select(|state: &UserState| state.users.clone()).await;
-/// assert_eq!(
-///     users,
-///     vec![
-///         User {
-///             id: 0,
-///             name: "John Doe".to_string(),
-///         },
-///         User {
-///             id: 1,
-///             name: "Jane Doe".to_string(),
-///         },
-///     ]
-/// );
-/// # }
-/// ```
+use crate::{
+    DispatchError, DispatchResult, Extended, InputSet, Middleware, MiddlewareApi, Next, Store,
+    middleware::{DispatchInput, Promote},
+};
+
+/// Enables typed asynchronous function dispatch. Actions emitted by thunks enter
+/// the complete action middleware chain. Function values themselves are handled
+/// separately from action-only middleware closures.
 pub struct ThunkMiddleware;
 
-#[async_trait]
-impl<State, Action, Inner> MiddleWare<State, ActionOrThunk<State, Action, Inner>, Inner, Action> for ThunkMiddleware
-where
-    Action: Send + 'static,
-    State: Send + 'static,
-    Inner: StoreApi<State, Action> + Send + Sync + 'static,
-{
-    async fn dispatch(&self, action: ActionOrThunk<State, Action, Inner>, inner: &Arc<Inner>) {
-        match action {
-            ActionOrThunk::Action(action) => {
-                inner.dispatch(action).await;
-            }
-            ActionOrThunk::Thunk(thunk) => {
-                let api = inner.to_owned();
+#[doc(hidden)]
+pub struct WithThunks<Inputs>(PhantomData<fn(Inputs)>);
 
-                tokio::spawn(async move {
-                    thunk.execute(api).await;
-                });
-            }
+impl<Inputs: InputSet> InputSet for WithThunks<Inputs> {
+    type Input = Inputs::Input;
+}
+impl<Inputs: Promote<Action, Path>, Action, Path> Promote<Action, Path> for WithThunks<Inputs> {
+    fn promote(action: Action) -> Self::Input {
+        Inputs::promote(action)
+    }
+}
+
+#[doc(hidden)]
+pub trait AllowsThunks: InputSet {}
+impl<Inputs: InputSet> AllowsThunks for WithThunks<Inputs> {}
+impl<Action, Previous: AllowsThunks> AllowsThunks for Extended<Action, Previous> {}
+
+impl<State, Inner: InputSet, Output, Root: InputSet, RootOutput>
+    Middleware<State, Inner, Output, Root, RootOutput> for ThunkMiddleware
+{
+    type Inputs = WithThunks<Inner>;
+    type Output = Output;
+
+    fn dispatch(
+        &self,
+        _: &MiddlewareApi<State, Root, RootOutput>,
+        next: Next<Inner::Input, Output>,
+        action: Inner::Input,
+    ) -> DispatchResult<Output> {
+        next.dispatch(action)
+    }
+}
+
+/// A consuming asynchronous closure. No boxing, `Send`, or `'static` requirement
+/// on the closure itself. Its future can borrow caller-owned data.
+pub struct Thunk<F>(F);
+
+pub fn thunk<State, Inputs: InputSet, Output, F, Fut>(f: F) -> Thunk<F>
+where
+    F: FnOnce(MiddlewareApi<State, Inputs, Output>) -> Fut,
+    Fut: Future,
+{
+    Thunk(f)
+}
+
+#[doc(hidden)]
+pub struct ThunkPath;
+
+/// An awaitable thunk result. Keeps the store alive until completion or cancellation.
+#[must_use = "the thunk's asynchronous body runs when this future is polled"]
+pub struct ThunkFuture<State, Inputs: InputSet, Output, Fut> {
+    future: Option<Pin<Box<Fut>>>,
+    store: Option<Store<State, Inputs::Input, Output, Inputs>>,
+    error: Option<DispatchError>,
+}
+
+impl<State, Inputs, Output, F, Fut, Value, Error> DispatchInput<State, Inputs, Output, ThunkPath>
+    for Thunk<F>
+where
+    Inputs: AllowsThunks,
+    F: FnOnce(MiddlewareApi<State, Inputs, Output>) -> Fut,
+    Fut: Future<Output = Result<Value, Error>>,
+    Error: From<DispatchError>,
+{
+    type Output = ThunkFuture<State, Inputs, Output, Fut>;
+
+    fn dispatch_into(
+        self,
+        store: DispatchResult<Store<State, Inputs::Input, Output, Inputs>>,
+    ) -> Self::Output {
+        match store {
+            Ok(store) => ThunkFuture {
+                future: Some(Box::pin((self.0)(store.api()))),
+                store: Some(store),
+                error: None,
+            },
+            Err(error) => ThunkFuture {
+                future: None,
+                store: None,
+                error: Some(error),
+            },
         }
     }
 }
 
-pub enum ActionOrThunk<State, Action, Api>
+impl<State, Inputs: InputSet, Output, Fut, Value, Error> Future
+    for ThunkFuture<State, Inputs, Output, Fut>
 where
-    Action: Send + 'static,
-    State: Send + 'static,
-    Api: StoreApi<State, Action> + Send + Sync,
+    Fut: Future<Output = Result<Value, Error>>,
+    Error: From<DispatchError>,
 {
-    Action(Action),
-    Thunk(Box<dyn Thunk<State, Action, Api> + Send + Sync>),
-}
+    type Output = Result<Value, Error>;
 
-pub fn thunk<T, State, Action, Api>(t: T) -> ActionOrThunk<State, Action, Api>
-where
-    T: Thunk<State, Action, Api> + Send + Sync + 'static,
-    Action: Send + 'static,
-    State: Send + 'static,
-    Api: StoreApi<State, Action> + Send + Sync + 'static,
-{
-    ActionOrThunk::Thunk(Box::new(t))
-}
-
-impl<State, Action, Api> From<Action> for ActionOrThunk<State, Action, Api>
-where
-    Action: Send + 'static,
-    State: Send + 'static,
-    Api: StoreApi<State, Action> + Send + Sync + 'static,
-{
-    fn from(action: Action) -> Self {
-        ActionOrThunk::Action(action)
-    }
-}
-
-#[async_trait]
-pub trait Thunk<State, Action, Api>
-where
-    Action: Send + 'static,
-    State: Send + 'static,
-    Api: StoreApi<State, Action> + Send + Sync + 'static,
-{
-    async fn execute(&self, store_api: Arc<Api>);
-}
-
-#[async_trait]
-impl<F, Fut, State, Action, Api> Thunk<State, Action, Api> for F
-where
-    F: Fn(Arc<Api>) -> Fut + Sync,
-    Fut: Future<Output = ()> + Send,
-    Action: Send + 'static,
-    State: Send + 'static,
-    Api: StoreApi<State, Action> + Send + Sync + 'static,
-{
-    async fn execute(&self, store_api: Arc<Api>) {
-        self(store_api).await;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::Store;
-    use std::time::Duration;
-    use tokio::time::sleep;
-
-    #[derive(Default, Debug, PartialEq)]
-    struct UserState {
-        users: Vec<User>,
-    }
-
-    #[derive(Clone, Debug, PartialEq)]
-    struct User {
-        id: u8,
-        name: String,
-    }
-
-    enum UserAction {
-        UsersLoaded { users: Vec<User> },
-    }
-
-    fn user_reducer(_state: UserState, action: UserAction) -> UserState {
-        match action {
-            UserAction::UsersLoaded { users } => UserState { users },
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        if let Some(error) = this.error.take() {
+            return Poll::Ready(Err(error.into()));
         }
-    }
-
-    struct LoadUsersThunk;
-    #[async_trait]
-    impl<Api> Thunk<UserState, UserAction, Api> for LoadUsersThunk
-    where
-        Api: StoreApi<UserState, UserAction> + Send + Sync + 'static,
-    {
-        async fn execute(&self, store_api: Arc<Api>) {
-            // Emulate api call by delaying for 100 ms
-            sleep(Duration::from_millis(100)).await;
-
-            // Return the data to the store
-            store_api
-                .dispatch(UserAction::UsersLoaded {
-                    users: vec![
-                        User {
-                            id: 0,
-                            name: "John Doe".to_string(),
-                        },
-                        User {
-                            id: 1,
-                            name: "Jane Doe".to_string(),
-                        },
-                    ],
-                })
-                .await;
+        let result = this
+            .future
+            .as_mut()
+            .expect("thunk polled after completion")
+            .as_mut()
+            .poll(cx);
+        if result.is_ready() {
+            this.future = None;
+            this.store = None;
         }
-    }
-
-    #[tokio::test]
-    async fn load_users_thunk() {
-        let store = Store::new(user_reducer).wrap(ThunkMiddleware).await;
-        store.dispatch(thunk(LoadUsersThunk)).await;
-
-        let users = store.select(|state: &UserState| state.users.clone()).await;
-        assert_eq!(users, vec![]);
-
-        sleep(Duration::from_millis(200)).await;
-
-        let users = store.select(|state: &UserState| state.users.clone()).await;
-        assert_eq!(
-            users,
-            vec![
-                User {
-                    id: 0,
-                    name: "John Doe".to_string(),
-                },
-                User {
-                    id: 1,
-                    name: "Jane Doe".to_string(),
-                },
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn load_users_fn_thunk() {
-        let store = Store::new(user_reducer).wrap(ThunkMiddleware).await;
-
-        async fn load_users(store_api: Arc<impl StoreApi<UserState, UserAction>>) {
-            // Emulate api call by delaying for 100 ms
-            sleep(Duration::from_millis(100)).await;
-
-            // Return the data to the store
-            store_api
-                .dispatch(UserAction::UsersLoaded {
-                    users: vec![
-                        User {
-                            id: 0,
-                            name: "John Doe".to_string(),
-                        },
-                        User {
-                            id: 1,
-                            name: "Jane Doe".to_string(),
-                        },
-                    ],
-                })
-                .await;
-        }
-
-        store.dispatch(thunk(load_users)).await;
-
-        let users = store.select(|state: &UserState| state.users.clone()).await;
-        assert_eq!(users, vec![]);
-
-        sleep(Duration::from_millis(200)).await;
-
-        let users = store.select(|state: &UserState| state.users.clone()).await;
-        assert_eq!(
-            users,
-            vec![
-                User {
-                    id: 0,
-                    name: "John Doe".to_string(),
-                },
-                User {
-                    id: 1,
-                    name: "Jane Doe".to_string(),
-                },
-            ]
-        );
+        result
     }
 }

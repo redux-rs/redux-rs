@@ -1,76 +1,31 @@
-use redux_rs::middlewares::thunk::{ActionOrThunk, ThunkMiddleware};
-use redux_rs::{Store, StoreApi};
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::time::sleep;
+use redux_rs::{
+    DispatchError, Store,
+    middlewares::thunk::{ThunkMiddleware, thunk},
+};
 
-#[derive(Default, Debug, PartialEq)]
-struct UserState {
-    users: Vec<User>,
+#[derive(Debug)]
+enum Action {
+    Loaded(String),
 }
 
-#[derive(Clone, Debug, PartialEq)]
-struct User {
-    id: u8,
-    name: String,
-}
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), DispatchError> {
+    let store = Store::builder(|_: String, action: &Action| match action {
+        Action::Loaded(name) => name.clone(),
+    })
+    .wrap(ThunkMiddleware)
+    .build();
 
-enum UserAction {
-    UsersLoaded { users: Vec<User> },
-}
+    let name = String::from("Jane Doe");
+    let length = store
+        .dispatch(thunk(move |api| async move {
+            tokio::task::yield_now().await; // Substitute an actual asynchronous request.
+            api.dispatch(Action::Loaded(name))?;
+            Ok::<_, DispatchError>(api.select(|name: &String| name.len()))
+        }))
+        .await?;
 
-fn user_reducer(_state: UserState, action: UserAction) -> UserState {
-    match action {
-        UserAction::UsersLoaded { users } => UserState { users },
-    }
-}
-
-async fn load_users(store_api: Arc<impl StoreApi<UserState, UserAction>>) {
-    // Emulate api call by delaying for 100 ms
-    sleep(Duration::from_millis(100)).await;
-
-    // Return the data to the store
-    store_api
-        .dispatch(UserAction::UsersLoaded {
-            users: vec![
-                User {
-                    id: 0,
-                    name: "John Doe".to_string(),
-                },
-                User {
-                    id: 1,
-                    name: "Jane Doe".to_string(),
-                },
-            ],
-        })
-        .await;
-}
-
-#[tokio::main]
-async fn main() {
-    // Set up the store with a reducer and wrap it with thunk middleware
-    // Because the store is now wrapped with ThunkMiddleware we need to dispatch ActionOrThunk instead of actions
-    let store = Store::new(user_reducer).wrap(ThunkMiddleware).await;
-
-    // Dispatch our thunk which emulates loading users from an api
-    store.dispatch(ActionOrThunk::Thunk(Box::new(load_users))).await;
-
-    // Wait till the "api call" is completed
-    sleep(Duration::from_millis(200)).await;
-
-    // Get the users from the store
-    let users = store.select(|state: &UserState| state.users.clone()).await;
-    assert_eq!(
-        users,
-        vec![
-            User {
-                id: 0,
-                name: "John Doe".to_string(),
-            },
-            User {
-                id: 1,
-                name: "Jane Doe".to_string(),
-            },
-        ]
-    );
+    assert_eq!(length, 8);
+    assert_eq!(store.get_state(), "Jane Doe");
+    Ok(())
 }

@@ -3,21 +3,44 @@ name: build
 on:
   push:
   pull_request:
-    branches: [ master ]
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  test:
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        rust: [stable, "1.88.0"]
+    env:
+      RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
     steps:
-      - uses: actions/checkout@v2
-      - name: Install rustup
-        run: rustup component add rustfmt
-      - name: Build
-        run: cargo build --all-features --verbose
-      - name: Run tests
-        run: cargo test --all-features --verbose
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+      - name: Test core and individual features
+        run: |
+          cargo test --no-default-features
+          cargo test --features logger
+          cargo test --features thunk
+          cargo test --features tokio
+          cargo test --all-features
+      - name: Run examples
+        run: |
+          cargo run --example basic_todo
+          cargo run --example logger_middleware --features logger
+          cargo run --example thunk_middleware_fn --features thunk
+          cargo run --example typed_middleware --features logger,thunk
+      - name: Formatting
+        if: matrix.rust == 'stable'
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --all-features

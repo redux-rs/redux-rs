@@ -1,39 +1,7 @@
-/// # Subscriber trait
-/// A subscriber is what gets called every time a new state is calculated.
-/// You create a subscriber by implementing the `Subscriber` trait or by creating a function with the signature `Fn(&State)`
-///
-/// ## Trait example
-/// ```
-/// use redux_rs::Subscriber;
-///
-/// #[derive(Debug)]
-/// struct Counter(i8);
-///
-/// struct PrintSubscriber;
-/// impl Subscriber<Counter> for PrintSubscriber {
-///     fn notify(&self, state: &Counter) {
-///         println!("State changed: {:?}", state);
-///     }
-/// }
-/// ```
-///
-/// ## Fn example
-/// ```
-/// use redux_rs::{Store, Subscriber};
-///
-/// #[derive(Debug)]
-/// struct Counter(i8);
-///
-/// fn print_subscriber(state: &Counter) {
-///     println!("State changed: {:?}", state);
-/// }
-///
-/// # #[tokio::main(flavor = "current_thread")]
-/// # async fn async_test() {
-/// # let store = Store::new_with_state(|store: Counter, _action: ()| store, Counter(0));
-/// # store.subscribe(print_subscriber).await;
-/// # }
-/// ```
+use std::cell::RefCell;
+
+/// Receives a state snapshot after dispatch. See also [`crate::Store::listen`]
+/// for Redux-style listeners that do not require cloning state.
 pub trait Subscriber<State> {
     fn notify(&self, state: &State);
 }
@@ -44,5 +12,33 @@ where
 {
     fn notify(&self, state: &State) {
         self(state);
+    }
+}
+
+/// Retain this handle to keep receiving notifications. Dropping it unsubscribes.
+#[must_use = "dropping the subscription immediately unsubscribes"]
+pub struct Subscription {
+    cancel: RefCell<Option<Box<dyn FnOnce()>>>,
+}
+
+impl Subscription {
+    pub(crate) fn new(cancel: impl FnOnce() + 'static) -> Self {
+        Self {
+            cancel: RefCell::new(Some(Box::new(cancel))),
+        }
+    }
+
+    /// Remove this listener. Repeated calls are harmless.
+    pub fn unsubscribe(&self) {
+        let cancel = self.cancel.borrow_mut().take();
+        if let Some(cancel) = cancel {
+            cancel();
+        }
+    }
+}
+
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        self.unsubscribe();
     }
 }

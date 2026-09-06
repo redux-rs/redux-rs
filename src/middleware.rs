@@ -1,338 +1,243 @@
-use crate::{Selector, Subscriber};
-use async_trait::async_trait;
-use std::marker::PhantomData;
-use std::sync::Arc;
+use std::{
+    marker::PhantomData,
+    rc::{Rc, Weak},
+};
 
-/// The store api offers an abstraction around all store functionality.
-///
-/// Both Store and StoreWithMiddleware implement StoreApi.
-/// This enables us to wrap multiple middlewares around each other.
-#[async_trait]
-pub trait StoreApi<State, Action>
+use crate::{DispatchError, DispatchResult, Selector, Store, store::Inner};
+
+/// The accepted action types of a stack. Inferred by the builder.
+pub trait InputSet {
+    type Input;
+}
+
+/// The reducer's original action type.
+pub struct Single<Action>(PhantomData<fn(Action)>);
+
+impl<Action> InputSet for Single<Action> {
+    type Input = Action;
+}
+
+/// A new input type plus all inputs accepted before it was introduced.
+pub struct Extended<Action, Previous>(PhantomData<fn(Action, Previous)>);
+
+impl<Action, Previous> InputSet for Extended<Action, Previous> {
+    type Input = Action;
+}
+
+#[doc(hidden)]
+pub struct Here;
+#[doc(hidden)]
+pub struct There<Path>(PhantomData<fn(Path)>);
+
+/// Converts an accepted action through every intervening wrapper.
+#[doc(hidden)]
+pub trait Promote<Action, Path>: InputSet {
+    fn promote(action: Action) -> Self::Input;
+}
+
+impl<Action> Promote<Action, Here> for Single<Action> {
+    fn promote(action: Action) -> Action {
+        action
+    }
+}
+
+impl<Action, Previous> Promote<Action, Here> for Extended<Action, Previous> {
+    fn promote(action: Action) -> Action {
+        action
+    }
+}
+
+impl<Action, Previous, Input, Path> Promote<Input, There<Path>> for Extended<Action, Previous>
 where
-    Action: Send + 'static,
-    State: Send + 'static,
+    Previous: Promote<Input, Path>,
+    Action: From<Previous::Input>,
 {
-    /// Dispatch a new action to the store
-    ///
-    /// Notice that this method takes &self and not &mut self,
-    /// this enables us to dispatch actions from multiple places at once without requiring locks.
-    async fn dispatch<A: Into<Action> + Send>(&self, action: A);
+    fn promote(input: Input) -> Action {
+        Previous::promote(input).into()
+    }
+}
 
-    /// Select a part of the state, this is more efficient than copying the entire state all the time.
-    /// In case you still need a full copy of the state, use the state_cloned method.
-    async fn select<S: Selector<State, Result = Result>, Result>(&self, selector: S) -> Result
+/// Access to the complete chain. Cloning this API does not keep the store alive,
+/// so middleware can retain it without creating an ownership cycle.
+pub struct MiddlewareApi<State, Inputs: InputSet, Output> {
+    pub(crate) inner: Weak<Inner<State, Inputs, Output>>,
+}
+
+impl<State, Inputs: InputSet, Output> Clone for MiddlewareApi<State, Inputs, Output> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+impl<State, Inputs: InputSet, Output> MiddlewareApi<State, Inputs, Output> {
+    pub(crate) fn store(&self) -> DispatchResult<Store<State, Inputs::Input, Output, Inputs>> {
+        self.inner
+            .upgrade()
+            .map(Store::from_inner)
+            .ok_or(DispatchError::StoreDropped)
+    }
+
+    /// Start again at the outermost middleware.
+    pub fn dispatch<Action, Path>(
+        &self,
+        action: Action,
+    ) -> <Action as DispatchInput<State, Inputs, Output, Path>>::Output
     where
-        S: Selector<State, Result = Result> + Send + 'static,
-        Result: Send + 'static;
+        Action: DispatchInput<State, Inputs, Output, Path>,
+    {
+        action.dispatch_into(self.store().and_then(Store::for_dispatch))
+    }
 
-    /// Returns a cloned version of the state.
-    /// This is not efficient, if you only need a part of the state use select instead
-    async fn state_cloned(&self) -> State
+    pub fn try_select<S: Selector<State>>(&self, selector: S) -> DispatchResult<S::Result> {
+        self.store()?.try_select(selector)
+    }
+
+    pub fn select<S: Selector<State>>(&self, selector: S) -> S::Result {
+        self.try_select(selector).expect("cannot select state")
+    }
+
+    pub fn get_state(&self) -> State
     where
         State: Clone,
     {
-        self.select(|state: &State| state.clone()).await
+        self.select(|state: &State| state.clone())
     }
-
-    /// Subscribe to state changes.
-    /// Every time an action is dispatched the subscriber will be notified after the state is updated
-    async fn subscribe<S: Subscriber<State> + Send + 'static>(&self, subscriber: S);
 }
 
-/// Middlewares are the way to introduce side effects to the redux store.
-///
-/// Some examples of middleware could be:
-/// - Logging middleware, log every action
-/// - Api call middleware, make an api call when a certain action is send
-///
-/// Notice that there's an Action and an InnerAction.
-/// This enables us to send actions which are not of the same type as the underlying store.
-///
-/// ## Logging middleware example
-/// ```
-/// use async_trait::async_trait;
-/// use std::sync::Arc;
-/// use redux_rs::{MiddleWare, Store, StoreApi};
-///
-/// #[derive(Default)]
-/// struct Counter(i8);
-///
-/// #[derive(Debug)]
-/// enum Action {
-///     Increment,
-///     Decrement
-/// }
-///
-/// fn counter_reducer(state: Counter, action: Action) -> Counter {
-///     match action {
-///         Action::Increment => Counter(state.0 + 1),
-///         Action::Decrement => Counter(state.0 - 1),
-///     }
-/// }
-///
-/// // Logger which logs every action before it's dispatched to the store
-/// struct LoggerMiddleware;
-/// #[async_trait]
-/// impl<Inner> MiddleWare<Counter, Action, Inner> for LoggerMiddleware
-///     where
-/// Inner: StoreApi<Counter, Action> + Send + Sync
-/// {
-///     async fn dispatch(&self, action: Action, inner: &Arc<Inner>)
-///     {
-///         // Print the action
-///         println!("Before action: {:?}", action);
-///
-///         // Dispatch the action to the underlying store
-///         inner.dispatch(action).await;
-///     }
-/// }
-///
-/// # #[tokio::main(flavor = "current_thread")]
-/// # async fn async_test() {
-/// // Create a new store and wrap it with out new LoggerMiddleware
-/// let store = Store::new(counter_reducer).wrap(LoggerMiddleware).await;
-///
-/// // Dispatch an increment action
-/// // The console should print our text
-/// store.dispatch(Action::Increment).await;
-///
-/// // Dispatch an decrement action
-/// // The console should print our text
-/// store.dispatch(Action::Decrement).await;
-/// # }
-/// ```
-#[async_trait]
-pub trait MiddleWare<State, Action, Inner, InnerAction = Action>
+/// The remaining middleware. Unlike [`MiddlewareApi::dispatch`], this does not
+/// restart the chain. It may be called zero, one, or several times, or cloned
+/// and retained for deferred forwarding. It does not keep the store alive.
+pub struct Next<Action, Output> {
+    pub(crate) dispatch: Rc<dyn Fn(Action) -> DispatchResult<Output>>,
+}
+
+impl<Action, Output> Clone for Next<Action, Output> {
+    fn clone(&self) -> Self {
+        Self {
+            dispatch: self.dispatch.clone(),
+        }
+    }
+}
+
+impl<Action, Output> Next<Action, Output> {
+    pub fn dispatch(&self, action: impl Into<Action>) -> DispatchResult<Output> {
+        (self.dispatch)(action.into())
+    }
+}
+
+#[doc(hidden)]
+pub struct Plain<Path>(PhantomData<fn(Path)>);
+
+/// Typed dispatch overloads for ordinary actions and asynchronous thunks.
+#[doc(hidden)]
+pub trait DispatchInput<State, Inputs: InputSet, Output, Path> {
+    type Output;
+    fn dispatch_into(
+        self,
+        store: DispatchResult<Store<State, Inputs::Input, Output, Inputs>>,
+    ) -> Self::Output;
+}
+
+impl<State, Inputs, Output, Action, Path> DispatchInput<State, Inputs, Output, Plain<Path>>
+    for Action
 where
-    Action: Send + 'static,
-    State: Send + 'static,
-    InnerAction: Send + 'static,
-    Inner: StoreApi<State, InnerAction> + Send + Sync,
+    Inputs: Promote<Action, Path>,
 {
-    /// This method is called the moment the middleware is wrapped around an underlying store api.
-    /// Initialization could be done here.
-    ///
-    /// For example, you could launch an "application started" action
-    #[allow(unused_variables)]
-    async fn init(&mut self, inner: &Arc<Inner>) {}
-
-    /// This method is called every time an action is dispatched to the store.
-    ///
-    /// You have the possibility to modify/cancel the action entirely.
-    /// You could also do certain actions before or after launching a specific/every action.
-    ///
-    /// NOTE: In the middleware you need to call `inner.dispatch(action).await;` otherwise no actions will be send to the underlying StoreApi (and eventually store)
-    async fn dispatch(&self, action: Action, inner: &Arc<Inner>);
+    type Output = DispatchResult<Output>;
+    fn dispatch_into(
+        self,
+        store: DispatchResult<Store<State, Inputs::Input, Output, Inputs>>,
+    ) -> Self::Output {
+        store?.dispatch_input(Inputs::promote(self))
+    }
 }
 
-/// Store which ties an underlying store and middleware together.
-pub struct StoreWithMiddleware<Inner, M, State, InnerAction, OuterAction>
+/// A layer with separately typed incoming actions, forwarded actions, and results.
+/// Prefer [`middleware`] or [`crate::StoreBuilder::middleware`] for closures.
+pub trait Middleware<State, Inner: InputSet, InnerOutput, Root: InputSet, RootOutput> {
+    type Inputs: InputSet;
+    type Output;
+
+    fn dispatch(
+        &self,
+        api: &MiddlewareApi<State, Root, RootOutput>,
+        next: Next<Inner::Input, InnerOutput>,
+        action: <Self::Inputs as InputSet>::Input,
+    ) -> DispatchResult<Self::Output>;
+}
+
+/// A closure introducing a new action type. For an unchanged input type, use the
+/// builder's `.middleware()` method instead.
+pub struct MiddlewareFn<F, Input, Output> {
+    handler: F,
+    types: PhantomData<fn(Input) -> Output>,
+}
+
+pub fn middleware<State, InnerInput, InnerOutput, Root: InputSet, RootOutput, Input, Output, F>(
+    handler: F,
+) -> MiddlewareFn<F, Input, Output>
 where
-    Inner: StoreApi<State, InnerAction> + Send + Sync,
-    M: MiddleWare<State, OuterAction, Inner, InnerAction> + Send + Sync,
-    State: Send + Sync + 'static,
-    InnerAction: Send + Sync + 'static,
-    OuterAction: Send + Sync + 'static,
+    F: Fn(
+        &MiddlewareApi<State, Root, RootOutput>,
+        Next<InnerInput, InnerOutput>,
+        Input,
+    ) -> DispatchResult<Output>,
 {
-    inner: Arc<Inner>,
-    middleware: M,
-
-    _types: PhantomData<(State, InnerAction, OuterAction)>,
+    MiddlewareFn {
+        handler,
+        types: PhantomData,
+    }
 }
 
-impl<Inner, M, State, InnerAction, OuterAction> StoreWithMiddleware<Inner, M, State, InnerAction, OuterAction>
+impl<State, Inner, InnerOutput, Root, RootOutput, Input, Output, F>
+    Middleware<State, Inner, InnerOutput, Root, RootOutput> for MiddlewareFn<F, Input, Output>
 where
-    Inner: StoreApi<State, InnerAction> + Send + Sync,
-    M: MiddleWare<State, OuterAction, Inner, InnerAction> + Send + Sync,
-    State: Send + Sync + 'static,
-    InnerAction: Send + Sync + 'static,
-    OuterAction: Send + Sync + 'static,
+    Inner: InputSet,
+    Root: InputSet,
+    Input: From<Inner::Input>,
+    F: Fn(
+        &MiddlewareApi<State, Root, RootOutput>,
+        Next<Inner::Input, InnerOutput>,
+        Input,
+    ) -> DispatchResult<Output>,
 {
-    pub(crate) async fn new(inner: Inner, mut middleware: M) -> Self {
-        let inner = Arc::new(inner);
+    type Inputs = Extended<Input, Inner>;
+    type Output = Output;
 
-        middleware.init(&inner).await;
-
-        StoreWithMiddleware {
-            inner,
-            middleware,
-            _types: Default::default(),
-        }
-    }
-
-    /// Wrap the store with middleware
-    pub async fn wrap<MNew, NewOuterAction>(self, middleware: MNew) -> StoreWithMiddleware<Self, MNew, State, OuterAction, NewOuterAction>
-    where
-        MNew: MiddleWare<State, NewOuterAction, Self, OuterAction> + Send + Sync,
-        NewOuterAction: Send + Sync + 'static,
-        State: Sync,
-    {
-        StoreWithMiddleware::new(self, middleware).await
+    fn dispatch(
+        &self,
+        api: &MiddlewareApi<State, Root, RootOutput>,
+        next: Next<Inner::Input, InnerOutput>,
+        action: Input,
+    ) -> DispatchResult<Output> {
+        (self.handler)(api, next, action)
     }
 }
 
-#[async_trait]
-impl<Inner, M, State, InnerAction, OuterAction> StoreApi<State, OuterAction> for StoreWithMiddleware<Inner, M, State, InnerAction, OuterAction>
+pub(crate) struct Preserve<F, Output>(pub F, pub PhantomData<fn() -> Output>);
+
+impl<State, Inner, InnerOutput, Root, RootOutput, Output, F>
+    Middleware<State, Inner, InnerOutput, Root, RootOutput> for Preserve<F, Output>
 where
-    Inner: StoreApi<State, InnerAction> + Send + Sync,
-    M: MiddleWare<State, OuterAction, Inner, InnerAction> + Send + Sync,
-    State: Send + Sync + 'static,
-    InnerAction: Send + Sync + 'static,
-    OuterAction: Send + Sync + 'static,
+    Inner: InputSet,
+    Root: InputSet,
+    F: Fn(
+        &MiddlewareApi<State, Root, RootOutput>,
+        Next<Inner::Input, InnerOutput>,
+        Inner::Input,
+    ) -> DispatchResult<Output>,
 {
-    async fn dispatch<A: Into<OuterAction> + Send>(&self, action: A) {
-        self.middleware.dispatch(action.into(), &self.inner).await
-    }
+    type Inputs = Inner;
+    type Output = Output;
 
-    async fn select<S: Selector<State, Result = Result>, Result>(&self, selector: S) -> Result
-    where
-        S: Selector<State, Result = Result> + Send + 'static,
-        Result: Send + 'static,
-    {
-        self.inner.select(selector).await
-    }
-
-    async fn subscribe<S: Subscriber<State> + Send + 'static>(&self, subscriber: S) {
-        self.inner.subscribe(subscriber).await;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::Store;
-    use std::sync::Mutex;
-
-    #[derive(Default)]
-    struct LogStore {
-        logs: Vec<String>,
-    }
-
-    struct Log(String);
-
-    fn log_reducer(store: LogStore, action: Log) -> LogStore {
-        let mut logs = store.logs;
-        logs.push(action.0);
-
-        LogStore { logs }
-    }
-
-    struct LoggerMiddleware {
-        prefix: &'static str,
-        logs: Arc<Mutex<Vec<String>>>,
-    }
-
-    impl LoggerMiddleware {
-        pub fn new(prefix: &'static str, logs: Arc<Mutex<Vec<String>>>) -> Self {
-            LoggerMiddleware { logs, prefix }
-        }
-
-        pub fn log(&self, message: String) {
-            let mut logs = self.logs.lock().unwrap();
-            logs.push(format!("[{}] {}", self.prefix, message));
-        }
-    }
-
-    #[async_trait]
-    impl<Inner> MiddleWare<LogStore, Log, Inner> for LoggerMiddleware
-    where
-        Inner: StoreApi<LogStore, Log> + Send + Sync,
-    {
-        async fn dispatch(&self, action: Log, inner: &Arc<Inner>) {
-            let log_message = action.0.clone();
-
-            // Simulate logging to the console, we log to a vec so we can unit test
-            self.log(format!("Before dispatching log message: {:?}", log_message));
-
-            // Dispatch the actual action
-            inner.dispatch(action).await;
-
-            // Simulate logging to the console, we log to a vec so we can unit test
-            self.log(format!("After dispatching log message: {:?}", log_message));
-        }
-    }
-
-    #[tokio::test]
-    async fn logger_middleware() {
-        let logs = Arc::new(Mutex::new(Vec::new()));
-        let log_middleware = LoggerMiddleware::new("log", logs.clone());
-
-        let store = Store::new(log_reducer).wrap(log_middleware).await;
-
-        store.dispatch(Log("Log 1".to_string())).await;
-
-        {
-            let lock = logs.lock().unwrap();
-            let logs: &Vec<String> = lock.as_ref();
-            assert_eq!(
-                logs,
-                &vec![
-                    "[log] Before dispatching log message: \"Log 1\"".to_string(),
-                    "[log] After dispatching log message: \"Log 1\"".to_string(),
-                ]
-            );
-        }
-
-        store.dispatch(Log("Log 2".to_string())).await;
-
-        {
-            let lock = logs.lock().unwrap();
-            let logs: &Vec<String> = lock.as_ref();
-            assert_eq!(
-                logs,
-                &vec![
-                    "[log] Before dispatching log message: \"Log 1\"".to_string(),
-                    "[log] After dispatching log message: \"Log 1\"".to_string(),
-                    "[log] Before dispatching log message: \"Log 2\"".to_string(),
-                    "[log] After dispatching log message: \"Log 2\"".to_string()
-                ]
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn logger_nested_middlewares() {
-        let logs = Arc::new(Mutex::new(Vec::new()));
-        let log_middleware_1 = LoggerMiddleware::new("middleware_1", logs.clone());
-        let log_middleware_2 = LoggerMiddleware::new("middleware_2", logs.clone());
-
-        let store = Store::new(log_reducer).wrap(log_middleware_1).await.wrap(log_middleware_2).await;
-
-        store.dispatch(Log("Log 1".to_string())).await;
-
-        {
-            let lock = logs.lock().unwrap();
-            let logs: &Vec<String> = lock.as_ref();
-            assert_eq!(
-                logs,
-                &vec![
-                    "[middleware_2] Before dispatching log message: \"Log 1\"".to_string(),
-                    "[middleware_1] Before dispatching log message: \"Log 1\"".to_string(),
-                    "[middleware_1] After dispatching log message: \"Log 1\"".to_string(),
-                    "[middleware_2] After dispatching log message: \"Log 1\"".to_string(),
-                ]
-            );
-        }
-
-        store.dispatch(Log("Log 2".to_string())).await;
-
-        {
-            let lock = logs.lock().unwrap();
-            let logs: &Vec<String> = lock.as_ref();
-            assert_eq!(
-                logs,
-                &vec![
-                    "[middleware_2] Before dispatching log message: \"Log 1\"".to_string(),
-                    "[middleware_1] Before dispatching log message: \"Log 1\"".to_string(),
-                    "[middleware_1] After dispatching log message: \"Log 1\"".to_string(),
-                    "[middleware_2] After dispatching log message: \"Log 1\"".to_string(),
-                    "[middleware_2] Before dispatching log message: \"Log 2\"".to_string(),
-                    "[middleware_1] Before dispatching log message: \"Log 2\"".to_string(),
-                    "[middleware_1] After dispatching log message: \"Log 2\"".to_string(),
-                    "[middleware_2] After dispatching log message: \"Log 2\"".to_string(),
-                ]
-            );
-        }
+    fn dispatch(
+        &self,
+        api: &MiddlewareApi<State, Root, RootOutput>,
+        next: Next<Inner::Input, InnerOutput>,
+        action: Inner::Input,
+    ) -> DispatchResult<Output> {
+        (self.0)(api, next, action)
     }
 }
