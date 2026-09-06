@@ -1,7 +1,5 @@
-use async_trait::async_trait;
-use redux_rs::middlewares::thunk::{ActionOrThunk, Thunk, ThunkMiddleware};
-use redux_rs::{Store, StoreApi};
-use std::sync::Arc;
+use redux_rs::middlewares::thunk::{ThunkMiddleware, thunk};
+use redux_rs::{DispatchError, DispatchResult, MiddlewareApi, Promote, Store};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -20,54 +18,57 @@ enum UserAction {
     UsersLoaded { users: Vec<User> },
 }
 
-fn user_reducer(_state: UserState, action: UserAction) -> UserState {
+fn user_reducer(_state: UserState, action: &UserAction) -> UserState {
     match action {
-        UserAction::UsersLoaded { users } => UserState { users },
+        UserAction::UsersLoaded { users } => UserState {
+            users: users.clone(),
+        },
     }
 }
 
 struct LoadUsersThunk;
-#[async_trait]
-impl<Api> Thunk<UserState, UserAction, Api> for LoadUsersThunk
-where
-    Api: StoreApi<UserState, UserAction> + Send + Sync + 'static,
-{
-    async fn execute(&self, store_api: Arc<Api>) {
+// Adapt the struct's method with thunk(...) instead of implementing the old async trait.
+impl LoadUsersThunk {
+    async fn execute<Inputs, Output, Path>(
+        self,
+        store_api: MiddlewareApi<UserState, Inputs, Output>,
+    ) -> DispatchResult<()>
+    where
+        Inputs: Promote<UserAction, Path>,
+    {
         // Emulate api call by delaying for 100 ms
         sleep(Duration::from_millis(100)).await;
 
         // Return the data to the store
-        store_api
-            .dispatch(UserAction::UsersLoaded {
-                users: vec![
-                    User {
-                        id: 0,
-                        name: "John Doe".to_string(),
-                    },
-                    User {
-                        id: 1,
-                        name: "Jane Doe".to_string(),
-                    },
-                ],
-            })
-            .await;
+        store_api.dispatch(UserAction::UsersLoaded {
+            users: vec![
+                User {
+                    id: 0,
+                    name: "John Doe".to_string(),
+                },
+                User {
+                    id: 1,
+                    name: "Jane Doe".to_string(),
+                },
+            ],
+        })?;
+        Ok(())
     }
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), DispatchError> {
     // Set up the store with a reducer and wrap it with thunk middleware
-    // Because the store is now wrapped with ThunkMiddleware we need to dispatch ActionOrThunk instead of actions
-    let store = Store::new(user_reducer).wrap(ThunkMiddleware).await;
+    // Wrap thunks with thunk(...); ordinary actions can still be dispatched directly
+    let store = Store::builder(user_reducer).wrap(ThunkMiddleware).build();
 
-    // Dispatch our thunk which emulates loading users from an api
-    store.dispatch(ActionOrThunk::Thunk(Box::new(LoadUsersThunk))).await;
-
-    // Wait till the "api call" is completed
-    sleep(Duration::from_millis(200)).await;
+    // Dispatch our thunk which emulates loading users from an api, and await completion
+    store
+        .dispatch(thunk(|store_api| LoadUsersThunk.execute(store_api)))
+        .await?;
 
     // Get the users from the store
-    let users = store.select(|state: &UserState| state.users.clone()).await;
+    let users = store.select(|state: &UserState| state.users.clone());
     assert_eq!(
         users,
         vec![
@@ -81,4 +82,5 @@ async fn main() {
             },
         ]
     );
+    Ok(())
 }

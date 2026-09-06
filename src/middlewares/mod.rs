@@ -1,5 +1,5 @@
-#[cfg(feature = "middleware_logger")]
+#[cfg(feature = "logger")]
 pub mod logger;
 
-#[cfg(feature = "middleware_thunk")]
+#[cfg(feature = "thunk")]
 pub mod thunk;
