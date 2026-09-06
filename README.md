@@ -201,6 +201,33 @@ store directly. Keep a synchronous clone if both interfaces are needed.
 Generic dispatch helpers can use the public `Accepted: Promote<Input, Path>` bound;
 the compiler infers `Path` for each supported input type.
 
+## Runnable examples
+
+The original examples are ported to the 0.4 API, with assertions for each scenario:
+
+- [basic_todo.rs](examples/basic_todo.rs): composed reducers, adding/toggling todos,
+  visibility filters, a named selector, function selectors, and subscriptions.
+- [logger_middleware.rs](examples/logger_middleware.rs): application logging setup,
+  configurable middleware level, and several actions through a no-op reducer.
+- [thunk_middleware_fn.rs](examples/thunk_middleware_fn.rs): a reusable async
+  `load_users` function, a simulated API request, full user-list assertions, and
+  awaitable results alongside ordinary actions.
+- [thunk_middleware_trait.rs](examples/thunk_middleware_trait.rs): the original
+  struct-based request scenario, adapted to a consuming `execute` method and
+  `thunk(...)`. The legacy filename is retained; the old async trait is not required.
+- [typed_middleware.rs](examples/typed_middleware.rs): original and extended action
+  types, nested thunks, interception, and subscriptions.
+
+```sh
+cargo run --example basic_todo
+cargo run --example logger_middleware --features logger
+cargo run --example thunk_middleware_fn --features thunk
+cargo run --example thunk_middleware_trait --features thunk
+cargo run --example typed_middleware --features logger,thunk
+```
+
+CI runs all five examples on both stable Rust and the minimum supported version.
+
 ## Features and checks
 
 | Feature | Enables |

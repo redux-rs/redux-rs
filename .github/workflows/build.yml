@@ -34,6 +34,7 @@ jobs:
           cargo run --example basic_todo
           cargo run --example logger_middleware --features logger
           cargo run --example thunk_middleware_fn --features thunk
+          cargo run --example thunk_middleware_trait --features thunk
           cargo run --example typed_middleware --features logger,thunk
       - name: Formatting
         if: matrix.rust == 'stable'

@@ -40,7 +40,9 @@ the chain until `ThunkMiddleware` handles them. Intercept with
 Interceptors can reject calls and wrap their futures; the caller keeps its typed
 application result. Emitted actions always enter the complete chain.
 
-The old worker/message traits and detached-thunk trait example have been removed.
+The old worker/message traits have been removed. The original
+`thunk_middleware_trait` example now demonstrates a reusable struct whose consuming
+`execute` method is adapted with `thunk(move |api| request.execute(api))`.
 The optional Tokio adapter is a bounded mailbox with explicit shutdown instead.
 Do not await that mailbox from within synchronous store callbacks; use the local
 `MiddlewareApi` to dispatch directly. Reducers remain pure and synchronous.

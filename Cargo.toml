@@ -39,5 +39,9 @@ name = "thunk_middleware_fn"
 required-features = [ "thunk" ]
 
 [[example]]
+name = "thunk_middleware_trait"
+required-features = [ "thunk" ]
+
+[[example]]
 name = "typed_middleware"
 required-features = [ "logger", "thunk" ]
