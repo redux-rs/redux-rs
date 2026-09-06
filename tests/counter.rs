@@ -233,6 +233,31 @@ fn selector_cannot_dispatch_and_reducer_panic_poison_is_explicit() {
 }
 
 #[test]
+fn selector_dispatch_runs_middleware_but_cannot_reduce_borrowed_state() {
+    let effects = Rc::new(Cell::new(0));
+    let capture = effects.clone();
+    let store = Store::builder(reducer)
+        .middleware(move |_, next, action| {
+            capture.set(capture.get() + 1);
+            match action {
+                Action::Set(0) => Ok(action),
+                action => next.dispatch(action),
+            }
+        })
+        .build();
+    assert_eq!(
+        store.select(|_: &i32| store.dispatch(Action::Set(0))),
+        Ok(Action::Set(0))
+    );
+    assert_eq!(
+        store.select(|_: &i32| store.dispatch(Action::Increment)),
+        Err(DispatchError::StateBorrowed)
+    );
+    assert_eq!(effects.get(), 2);
+    assert_eq!(store.get_state(), 0);
+}
+
+#[test]
 fn reducer_redispatch_is_rejected_before_any_middleware_runs() {
     let callback = Rc::new(RefCell::new(None::<Box<dyn Fn()>>));
     let callback_in_reducer = callback.clone();

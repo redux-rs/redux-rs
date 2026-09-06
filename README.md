@@ -55,6 +55,9 @@ transform, reject, swallow, or multiply actions, and change the typed result.
 It returns `DispatchResult<Output>`; rejection uses `DispatchError::Rejected`.
 `next` is cloneable and can be retained for delayed forwarding. It holds a weak
 connection to state; forwarding after the store is dropped returns `StoreDropped`.
+Reduction and notification finish before dispatch returns only when middleware
+forwards synchronously. A successful dispatch may instead have swallowed or
+deferred the action; it does not guarantee a state update.
 
 The last wrapper runs first: `builder.wrap(a).wrap(b)` dispatches through
 `b -> a -> reducer`, then unwinds through `a -> b`. Only the completed builder
@@ -90,7 +93,7 @@ Each wrapper adds its input to the set of accepted types. If a subsequent wrappe
 adds `TracedAction: From<ActionWithLogLevel>`, all three types remain directly
 dispatchable. The crate composes the conversions before entering the complete
 chain; callers do not construct nested envelopes. Unsupported inputs fail to compile.
-Use `.middleware(...)` when reusing an already accepted input type, so routing
+Use `.middleware(...)` when preserving the current input type, so routing
 remains unambiguous. Built-in middleware preserves input types automatically.
 
 ## Awaitable thunks
@@ -109,16 +112,43 @@ let count = store.dispatch(thunk(|api| async move {
 
 Thunks accept `FnOnce` closures, can borrow caller-owned data, return application
 values and errors, and dispatch nested thunks. Their error type implements
-`From<DispatchError>`. No task is spawned automatically: dispatch calls the closure
-to obtain its future, and polling that future runs the asynchronous body.
+`From<DispatchError>`. No task is spawned automatically. When a call reaches
+`ThunkMiddleware`, it invokes the closure to obtain its future; polling the returned
+future runs the asynchronous body. An interceptor may reject or delay that call.
 Dropping the future cancels remaining work; actions already dispatched stay applied.
 The future retains the store until completion or cancellation.
 
-All actions emitted by a thunk pass through the complete action middleware chain,
-including wrappers added after `ThunkMiddleware`. Function values themselves are
-handled separately from action-only middleware closures. Thunks are executor
-independent; with Tokio, use local tasks rather than `tokio::spawn` for these
-non-`Send` store handles.
+Thunk calls follow middleware order and stop at `ThunkMiddleware`, just as Redux
+thunks stop at their handler. Implement `Middleware::dispatch_thunk`, or add a
+`.thunk_middleware(...)` closure **after** `.wrap(ThunkMiddleware)` to intercept them:
+
+```rust
+let store = Store::builder(reducer)
+    .wrap(ThunkMiddleware)
+    .thunk_middleware(|api, next, call| {
+        if api.get_state() < 0 {
+            return Err(DispatchError::Rejected("thunks disabled".into()));
+        }
+        let future = next.dispatch_thunk(call)?;
+        Ok(Box::pin(async move {
+            let outcome = future.await?;
+            println!("Thunk finished: {outcome:?}");
+            Ok(outcome)
+        }))
+    })
+    .build();
+```
+
+Action-only closures forward thunk calls unchanged; thunk-only closures forward
+actions unchanged. `LoggerMiddleware` logs both when placed outside the thunk handler.
+Interceptors see `ThunkOutcome::Succeeded` or `Failed`; the original application
+value/error, even one borrowing caller data, stays typed for the caller. Interceptors
+can return a `DispatchError` before or after execution, but cannot fabricate an
+arbitrary typed result. Success without running the task is reported as `Rejected`.
+
+All actions emitted by a thunk restart at the outermost layer, including wrappers
+added after `ThunkMiddleware`. Thunks are executor independent; with Tokio, use
+local tasks rather than `tokio::spawn` for these non-`Send` store handles.
 
 See [typed_middleware.rs](examples/typed_middleware.rs) for a complete runnable
 example combining ordinary actions, log-level actions, and nested thunks:
@@ -143,10 +173,14 @@ nested updates are visible to subsequent listeners.
 Cloned stores share ownership. `MiddlewareApi` and subscription handles are weak;
 they do not keep a store alive. Prefer capturing `store.api()` in callbacks to avoid
 ownership cycles. Dispatch through an expired API returns `StoreDropped`.
+Retained `Next` handles do not retain store state, but do retain downstream
+middleware and reducer captures until those handles are dropped.
 
 Reducers cannot read or dispatch through the store; attempts return `Reducing`.
-Dispatch during a selector's state borrow returns `StateBorrowed`. Application
-panics unwind normally. A reducer panic poisons the store because its previous
+An action reaching the reducer during a selector's state borrow returns
+`StateBorrowed`. Middleware runs first and may have side effects, swallow the action,
+or defer reduction until the borrow ends. Application panics unwind normally.
+A reducer panic poisons the store because its previous
 state was moved into the reducer; subsequent reduction/read attempts return
 `Poisoned`. `select`/`get_state` panic on unavailable state; use `try_select` to
 handle those errors explicitly.
@@ -164,6 +198,8 @@ handle drains the mailbox and releases the worker's store. `shutdown().await` cl
 all handles and waits for queued work to finish. Worker failures return `WorkerStopped`.
 The mailbox accepts ordinary action inputs; dispatch asynchronous thunks on the local
 store directly. Keep a synchronous clone if both interfaces are needed.
+Generic dispatch helpers can use the public `Accepted: Promote<Input, Path>` bound;
+the compiler infers `Path` for each supported input type.
 
 ## Features and checks
 

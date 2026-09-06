@@ -3,6 +3,8 @@ use std::{
     rc::{Rc, Weak},
 };
 
+#[cfg(feature = "thunk")]
+use crate::middlewares::thunk::{ThunkCall, ThunkTask};
 use crate::{DispatchError, DispatchResult, Selector, Store, store::Inner};
 
 /// The accepted action types of a stack. Inferred by the builder.
@@ -30,7 +32,7 @@ pub struct Here;
 pub struct There<Path>(PhantomData<fn(Path)>);
 
 /// Converts an accepted action through every intervening wrapper.
-#[doc(hidden)]
+/// Use this bound in generic dispatch helpers; `Path` is inferred at the call site.
 pub trait Promote<Action, Path>: InputSet {
     fn promote(action: Action) -> Self::Input;
 }
@@ -111,12 +113,16 @@ impl<State, Inputs: InputSet, Output> MiddlewareApi<State, Inputs, Output> {
 /// and retained for deferred forwarding. It does not keep the store alive.
 pub struct Next<Action, Output> {
     pub(crate) dispatch: Rc<dyn Fn(Action) -> DispatchResult<Output>>,
+    #[cfg(feature = "thunk")]
+    pub(crate) thunk: Rc<dyn for<'a> Fn(ThunkCall<'a>) -> DispatchResult<ThunkTask<'a>>>,
 }
 
 impl<Action, Output> Clone for Next<Action, Output> {
     fn clone(&self) -> Self {
         Self {
             dispatch: self.dispatch.clone(),
+            #[cfg(feature = "thunk")]
+            thunk: self.thunk.clone(),
         }
     }
 }
@@ -124,6 +130,12 @@ impl<Action, Output> Clone for Next<Action, Output> {
 impl<Action, Output> Next<Action, Output> {
     pub fn dispatch(&self, action: impl Into<Action>) -> DispatchResult<Output> {
         (self.dispatch)(action.into())
+    }
+
+    /// Forward a thunk to the remaining layers without restarting the chain.
+    #[cfg(feature = "thunk")]
+    pub fn dispatch_thunk<'a>(&self, thunk: ThunkCall<'a>) -> DispatchResult<ThunkTask<'a>> {
+        (self.thunk)(thunk)
     }
 }
 
@@ -166,6 +178,22 @@ pub trait Middleware<State, Inner: InputSet, InnerOutput, Root: InputSet, RootOu
         next: Next<Inner::Input, InnerOutput>,
         action: <Self::Inputs as InputSet>::Input,
     ) -> DispatchResult<Self::Output>;
+
+    /// Intercept a thunk at this layer's position in the chain. By default,
+    /// forward unchanged. Only layers outside `ThunkMiddleware` see thunk calls;
+    /// emitted actions still restart at the outermost layer.
+    ///
+    /// Return an error to reject the call, or forward and wrap the returned task
+    /// to observe asynchronous completion. The caller retains its typed result.
+    #[cfg(feature = "thunk")]
+    fn dispatch_thunk<'a>(
+        &self,
+        _api: &MiddlewareApi<State, Root, RootOutput>,
+        next: Next<Inner::Input, InnerOutput>,
+        thunk: ThunkCall<'a>,
+    ) -> DispatchResult<ThunkTask<'a>> {
+        next.dispatch_thunk(thunk)
+    }
 }
 
 /// A closure introducing a new action type. For an unchanged input type, use the

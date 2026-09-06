@@ -1,6 +1,6 @@
 #![cfg(feature = "tokio")]
 
-use redux_rs::{DispatchError, Store};
+use redux_rs::{AsyncStore, DispatchError, DispatchResult, InputSet, Promote, Store, middleware};
 use std::{
     future::Future,
     rc::Rc,
@@ -71,6 +71,53 @@ async fn worker_panic_returns_errors_to_waiting_and_future_callers() {
                 Store::new(|_: i32, _: &()| -> i32 { panic!("reducer failed") }).into_async(1);
             assert_eq!(store.dispatch(()).await, Err(DispatchError::WorkerStopped));
             assert_eq!(store.dispatch(()).await, Err(DispatchError::WorkerStopped));
+        })
+        .await;
+}
+
+// Integration tests are downstream crates: this bound must be publicly nameable.
+async fn forward<Input, Accepted, Path>(
+    store: &AsyncStore<i32, <Accepted as InputSet>::Input, i32, Accepted>,
+    input: Input,
+) -> DispatchResult<i32>
+where
+    Accepted: InputSet + Promote<Input, Path> + 'static,
+    Accepted::Input: 'static,
+    Input: Send + 'static,
+{
+    store.dispatch(input).await
+}
+
+#[tokio::test]
+async fn generic_helpers_accept_original_and_extended_inputs() {
+    struct Logged(i32);
+    impl From<i32> for Logged {
+        fn from(action: i32) -> Self {
+            Self(action)
+        }
+    }
+    struct Traced(Logged);
+    impl From<Logged> for Traced {
+        fn from(action: Logged) -> Self {
+            Self(action)
+        }
+    }
+    LocalSet::new()
+        .run_until(async {
+            let store = Store::builder(|state: i32, action: &i32| state + action)
+                .wrap(middleware(|_, next, action: Logged| {
+                    next.dispatch(action.0)
+                }))
+                .wrap(middleware(|_, next, action: Traced| {
+                    next.dispatch(action.0)
+                }))
+                .build()
+                .into_async(4);
+            assert_eq!(forward(&store, 1_i32).await, Ok(1));
+            assert_eq!(forward(&store, Logged(2)).await, Ok(2));
+            assert_eq!(forward(&store, Traced(Logged(3))).await, Ok(3));
+            assert_eq!(store.select(|state: &i32| *state).await, Ok(6));
+            store.shutdown().await.unwrap();
         })
         .await;
 }

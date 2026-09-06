@@ -7,7 +7,9 @@ This is a breaking API refactor, targeting Rust 1.88 and edition 2024.
 | `Fn(State, Action) -> State` reducer | `Fn(State, &Action) -> State` |
 | `Store::new(reducer)` requires Tokio | Synchronous, runtime-independent construction |
 | `store.dispatch(action).await` | `store.dispatch(action)?` returns the action or middleware's output |
+| `StoreApi::dispatch(value)` accepts arbitrary `Into<Action>` inputs | Dispatch a registered type, or convert explicitly: `store.dispatch(Action::from(value))?` |
 | `store.select(selector).await` | `store.select(selector)`; `try_select` for explicit error handling |
+| Custom `Selector::select(&self, state: &State)` | `Selector::select(self, state: &State)` consumes the selector; update trait implementations |
 | `store.state_cloned().await` | `store.get_state()` or `store.state_cloned()` |
 | `store.wrap(layer).await` | `Store::builder(reducer).wrap(layer).build()` |
 | `MiddleWare`, `StoreWithMiddleware`, `StoreApi` trait | `Middleware`, inferred builder/store types, weak `MiddlewareApi` handle |
@@ -27,10 +29,16 @@ Each introduced type must be distinct to keep compile-time routing unambiguous.
 The old `init` hook is gone: prepare middleware resources before wrapping, then
 dispatch startup actions through the complete store after `build`.
 
-Middleware closures return `DispatchResult<T>` and can change `T`. Async thunks
-return `Result<T, E>` with `E: From<DispatchError>`. Thunk input functions themselves
-are not sent to action-only middleware; their emitted actions enter the complete
-chain, even if the action middleware was added after `ThunkMiddleware`.
+Middleware closures return `DispatchResult<T>` and can change `T`. Success does
+not imply reduction: middleware may swallow or defer actions. During a selector,
+middleware still runs; only attempts to reduce borrowed state return `StateBorrowed`.
+
+Async thunks return `Result<T, E>` with `E: From<DispatchError>`. Thunk calls traverse
+the chain until `ThunkMiddleware` handles them. Intercept with
+`Middleware::dispatch_thunk` or `.thunk_middleware(...)` outside that handler
+(added later to the builder). Action-only closures forward thunk calls unchanged.
+Interceptors can reject calls and wrap their futures; the caller keeps its typed
+application result. Emitted actions always enter the complete chain.
 
 The old worker/message traits and detached-thunk trait example have been removed.
 The optional Tokio adapter is a bounded mailbox with explicit shutdown instead.

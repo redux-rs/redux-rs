@@ -45,6 +45,15 @@ async fn main() -> Result<(), DispatchError> {
     let store = Store::builder(reducer)
         .wrap(logger)
         .wrap(ThunkMiddleware)
+        .thunk_middleware(|_, next, call| {
+            log!(Level::Debug, "Starting thunk");
+            let future = next.dispatch_thunk(call)?;
+            Ok(Box::pin(async move {
+                let outcome = future.await?;
+                log!(Level::Debug, "Thunk finished: {outcome:?}");
+                Ok(outcome)
+            }))
+        })
         .build();
 
     let subscription = store.subscribe(|count: &i32| println!("Count changed: {count}"));

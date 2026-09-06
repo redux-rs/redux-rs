@@ -4,9 +4,7 @@
 
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{
-    DispatchError, DispatchResult, InputSet, Selector, Single, Store, middleware::Promote,
-};
+use crate::{DispatchError, DispatchResult, InputSet, Promote, Selector, Single, Store};
 
 type Work<State, Action, Output, Accepted> =
     Box<dyn FnOnce(&Store<State, Action, Output, Accepted>) + Send>;
@@ -85,6 +83,8 @@ impl<State: 'static, Action: 'static, Output: 'static, Accepted: InputSet<Input 
         result.await.map_err(|_| DispatchError::WorkerStopped)?
     }
 
+    /// Enqueue an accepted action. Generic helpers can name the public
+    /// `Accepted: Promote<Input, Path>` bound; `Path` is inferred by callers.
     pub async fn dispatch<Input: Send + 'static, Path>(
         &self,
         action: Input,

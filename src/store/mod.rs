@@ -11,9 +11,11 @@ use crate::{
     middleware::{DispatchInput, Preserve},
 };
 
-type Handler<Input, Output> = Rc<dyn Fn(Input) -> DispatchResult<Output>>;
+#[cfg(feature = "thunk")]
+use crate::middlewares::thunk::{ThunkCall, ThunkInterceptor, ThunkTask};
+
 type BuildHandler<State, Input, Output, Root, RootOutput> =
-    Box<dyn FnOnce(MiddlewareApi<State, Root, RootOutput>) -> Handler<Input, Output>>;
+    Box<dyn FnOnce(MiddlewareApi<State, Root, RootOutput>) -> Next<Input, Output>>;
 type Listener = Rc<dyn Fn()>;
 
 pub(crate) struct Core<State> {
@@ -73,11 +75,12 @@ impl<State> Core<State> {
 
 pub(crate) struct Inner<State, Inputs: InputSet, Output> {
     core: Rc<Core<State>>,
-    handler: Handler<Inputs::Input, Output>,
+    handler: Next<Inputs::Input, Output>,
 }
 
 /// A synchronous, cheaply cloneable store. No runtime, `Send`, or `Sync` required.
-/// Clones share state and middleware. The final clone owns their lifetime.
+/// Clones share state and middleware. The final clone releases the state;
+/// retained `Next` handles can keep downstream middleware/reducer captures alive.
 ///
 /// `Action` is the outermost input; `Accepted` records earlier input types and is
 /// inferred when building a wrapped store. Ordinary stores are `Store<State, Action>`.
@@ -115,7 +118,9 @@ impl<State, Action, Output, Accepted: InputSet<Input = Action>>
     }
 
     /// Dispatch an accepted action or (with thunk middleware) an asynchronous thunk.
-    /// Normal actions complete reduction and notification before this returns.
+    /// Actions forwarded synchronously complete reduction and notification before
+    /// this returns. Middleware may instead reject, swallow, or defer an action;
+    /// a successful dispatch alone does not guarantee that reduction occurred.
     pub fn dispatch<Input, Path>(
         &self,
         input: Input,
@@ -138,7 +143,12 @@ impl<State, Action, Output, Accepted: InputSet<Input = Action>>
         if self.inner.core.reducing.get() {
             return Err(DispatchError::Reducing);
         }
-        (self.inner.handler)(action)
+        self.inner.handler.dispatch(action)
+    }
+
+    #[cfg(feature = "thunk")]
+    pub(crate) fn dispatch_thunk<'a>(&self, thunk: ThunkCall<'a>) -> DispatchResult<ThunkTask<'a>> {
+        self.inner.handler.dispatch_thunk(thunk)
     }
 
     pub fn try_select<S: Selector<State>>(&self, selector: S) -> DispatchResult<S::Result> {
@@ -146,7 +156,8 @@ impl<State, Action, Output, Accepted: InputSet<Input = Action>>
     }
 
     /// Read state without cloning it. The closure can borrow local variables or
-    /// consume captures. Dispatch from inside a selector returns `StateBorrowed`.
+    /// consume captures. Reduction during the selector returns `StateBorrowed`;
+    /// middleware runs first and may swallow or defer the action successfully.
     pub fn select<S: Selector<State>>(&self, selector: S) -> S::Result {
         self.try_select(selector).expect("cannot select state")
     }
@@ -237,11 +248,17 @@ impl<State: 'static, Action: 'static> Store<State, Action> {
     ) -> StoreBuilder<State, Single<Action>, Action, Root, RootOutput> {
         StoreBuilder {
             state,
-            handler: Box::new(move |api| {
-                Rc::new(move |action| {
+            handler: Box::new(move |api| Next {
+                dispatch: Rc::new(move |action| {
                     api.store()?.inner.core.reduce(&reducer, &action)?;
                     Ok(action)
-                })
+                }),
+                #[cfg(feature = "thunk")]
+                thunk: Rc::new(|_| {
+                    Err(DispatchError::Rejected(
+                        "no thunk middleware handled the call".into(),
+                    ))
+                }),
             }),
         }
     }
@@ -284,13 +301,27 @@ where
         StoreBuilder {
             state: self.state,
             handler: Box::new(move |api| {
-                let next = Next {
-                    dispatch: (self.handler)(api.clone()),
+                let next = (self.handler)(api.clone());
+                #[cfg(feature = "thunk")]
+                let middleware = Rc::new(middleware);
+                #[cfg(feature = "thunk")]
+                let thunk: Rc<
+                    dyn for<'a> Fn(ThunkCall<'a>) -> DispatchResult<ThunkTask<'a>>,
+                > = {
+                    let (middleware, api, next) = (middleware.clone(), api.clone(), next.clone());
+                    Rc::new(move |thunk| {
+                        let _store = api.store()?.for_dispatch()?;
+                        middleware.dispatch_thunk(&api, next.clone(), thunk)
+                    })
                 };
-                Rc::new(move |action| {
-                    let _store = api.store()?.for_dispatch()?;
-                    middleware.dispatch(&api, next.clone(), action)
-                })
+                Next {
+                    dispatch: Rc::new(move |action| {
+                        let _store = api.store()?.for_dispatch()?;
+                        middleware.dispatch(&api, next.clone(), action)
+                    }),
+                    #[cfg(feature = "thunk")]
+                    thunk,
+                }
             }),
         }
     }
@@ -309,6 +340,49 @@ where
             + 'static,
     {
         self.wrap(Preserve(handler, PhantomData))
+    }
+
+    /// Add a thunk interceptor at this position; ordinary actions pass unchanged.
+    /// Add it after `.wrap(ThunkMiddleware)` to observe calls before execution.
+    /// Use `next.dispatch_thunk(call)` to forward, then optionally wrap its task.
+    ///
+    /// ```
+    /// use redux_rs::{DispatchError, Store};
+    /// use redux_rs::middlewares::thunk::{ThunkMiddleware, ThunkOutcome, thunk};
+    /// # async fn example() -> Result<(), DispatchError> {
+    /// let store = Store::builder(|state: i32, action: &i32| state + action)
+    ///     .wrap(ThunkMiddleware)
+    ///     .thunk_middleware(|api, next, call| {
+    ///         if api.get_state() < 0 {
+    ///             return Err(DispatchError::Rejected("thunks disabled".into()));
+    ///         }
+    ///         let future = next.dispatch_thunk(call)?;
+    ///         Ok(Box::pin(async move {
+    ///             let outcome = future.await?;
+    ///             assert_eq!(outcome, ThunkOutcome::Succeeded);
+    ///             Ok(outcome)
+    ///         }))
+    ///     })
+    ///     .build();
+    /// let value = store.dispatch(thunk(|api| async move {
+    ///     api.dispatch(1_i32)?;
+    ///     Ok::<_, DispatchError>(api.get_state())
+    /// })).await?;
+    /// assert_eq!(value, 1);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "thunk")]
+    pub fn thunk_middleware<F>(self, handler: F) -> Self
+    where
+        F: for<'a> Fn(
+                &MiddlewareApi<State, Root, RootOutput>,
+                Next<Inputs::Input, Output>,
+                ThunkCall<'a>,
+            ) -> DispatchResult<ThunkTask<'a>>
+            + 'static,
+    {
+        self.wrap(ThunkInterceptor(handler))
     }
 }
 

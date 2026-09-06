@@ -8,7 +8,7 @@ pub enum DispatchError {
     StoreDropped,
     /// Reducers may not dispatch or read the store.
     Reducing,
-    /// Dispatch was attempted inside a selector that still borrows the state.
+    /// Reduction was attempted inside a selector that still borrows the state.
     StateBorrowed,
     /// A reducer panicked after taking ownership of the previous state.
     Poisoned,
@@ -23,9 +23,7 @@ impl fmt::Display for DispatchError {
         match self {
             Self::StoreDropped => f.write_str("the store has been dropped"),
             Self::Reducing => f.write_str("reducers may not dispatch or read the store"),
-            Self::StateBorrowed => {
-                f.write_str("cannot dispatch while a selector borrows the state")
-            }
+            Self::StateBorrowed => f.write_str("cannot reduce while a selector borrows the state"),
             Self::Poisoned => f.write_str("the store lost its state because a reducer panicked"),
             Self::Rejected(reason) => write!(f, "action rejected: {reason}"),
             Self::WorkerStopped => f.write_str("the async store worker stopped before replying"),

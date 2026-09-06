@@ -45,8 +45,8 @@ mod subscriber;
 pub use async_store::AsyncStore;
 pub use error::{DispatchError, DispatchResult};
 pub use middleware::{
-    DispatchInput, Extended, InputSet, Middleware, MiddlewareApi, MiddlewareFn, Next, Single,
-    middleware,
+    DispatchInput, Extended, InputSet, Middleware, MiddlewareApi, MiddlewareFn, Next, Promote,
+    Single, middleware,
 };
 pub use reducer::Reducer;
 pub use selector::Selector;
