@@ -42,7 +42,7 @@ application result. Emitted actions always enter the complete chain.
 
 The old worker/message traits have been removed. The original
 `thunk_middleware_trait` example now demonstrates a reusable struct whose consuming
-`execute` method is adapted with `thunk(move |api| request.execute(api))`.
+`execute` method is adapted with `thunk(|store_api| LoadUsersThunk.execute(store_api))`.
 The optional Tokio adapter is a bounded mailbox with explicit shutdown instead.
 Do not await that mailbox from within synchronous store callbacks; use the local
 `MiddlewareApi` to dispatch directly. Reducers remain pure and synchronous.

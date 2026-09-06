@@ -205,13 +205,13 @@ the compiler infers `Path` for each supported input type.
 
 The original examples are ported to the 0.4 API, with assertions for each scenario:
 
-- [basic_todo.rs](examples/basic_todo.rs): composed reducers, adding/toggling todos,
-  visibility filters, a named selector, function selectors, and subscriptions.
+- [basic_todo.rs](examples/basic_todo.rs): adding/toggling todos, setting the
+  visibility filter, a named selector, and subscriptions.
 - [logger_middleware.rs](examples/logger_middleware.rs): application logging setup,
   configurable middleware level, and several actions through a no-op reducer.
 - [thunk_middleware_fn.rs](examples/thunk_middleware_fn.rs): a reusable async
   `load_users` function, a simulated API request, full user-list assertions, and
-  awaitable results alongside ordinary actions.
+  awaiting completion before selecting state.
 - [thunk_middleware_trait.rs](examples/thunk_middleware_trait.rs): the original
   struct-based request scenario, adapted to a consuming `execute` method and
   `thunk(...)`. The legacy filename is retained; the old async trait is not required.
